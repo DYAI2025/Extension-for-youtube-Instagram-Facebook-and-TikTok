@@ -1,0 +1,70 @@
+/* ─── Idle ───────────────────────────────────────────────────────────────── */
+.idle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0 12px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* ─── Active ─────────────────────────────────────────────────────────────── */
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 11px 13px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot.youtube   { background: #FF4444; box-shadow: 0 0 5px rgba(255,68,68,0.5); }
+.dot.tiktok    { background: #E8E8E8; }
+.dot.instagram { background: #E94F8B; box-shadow: 0 0 5px rgba(233,79,139,0.4); }
+.dot.facebook  { background: #4267B2; }
+.dot.unknown   { background: var(--text-3); }
+
+.platform {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.strategy {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid rgba(91, 127, 255, 0.18);
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.title {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}

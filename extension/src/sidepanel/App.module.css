@@ -1,0 +1,157 @@
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  --bg:          #08080E;
+  --bg-2:        #0D0D18;
+  --bg-3:        #131320;
+  --border:      #1C1C2E;
+  --border-hi:   #2A2A42;
+
+  --text:        #E8E8F5;
+  --text-2:      #7878A0;
+  --text-3:      #44445A;
+
+  --accent:      #5B7FFF;
+  --accent-dim:  rgba(91, 127, 255, 0.12);
+  --accent-glow: rgba(91, 127, 255, 0.25);
+
+  --success:     #34D399;
+  --error:       #F87171;
+  --error-bg:    rgba(248, 113, 113, 0.08);
+  --error-border:rgba(248, 113, 113, 0.2);
+
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   14px;
+
+  --transition:  150ms ease;
+}
+
+/* ─── Root layout ────────────────────────────────────────────────────────── */
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+/* ─── Top bar ────────────────────────────────────────────────────────────── */
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  height: 46px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.logoMark {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.topBarTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.topBarActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.iconBtn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition), color var(--transition);
+}
+
+.iconBtn:hover {
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+
+.iconBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ─── Back button ────────────────────────────────────────────────────────── */
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color var(--transition);
+}
+
+.backBtn:hover {
+  color: var(--text);
+}
+
+.backBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ─── Scrollable content area ────────────────────────────────────────────── */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ─── Error banner ───────────────────────────────────────────────────────── */
+.errorText {
+  font-size: 12px;
+  color: var(--error);
+  background: var(--error-bg);
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--error-border);
+  line-height: 1.5;
+}

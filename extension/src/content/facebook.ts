@@ -1,0 +1,57 @@
+import type { LiveCaptureChunkMessage } from '@shared/types'
+
+let captionObserver: MutationObserver | null = null
+
+function startLiveCapture() {
+  if (captionObserver) return
+
+  // Facebook video captions appear in an SVG/div overlay
+  const selectors = ['[data-sigil="caption"]', '[class*="captionText"]']
+
+  function findContainer() {
+    for (const sel of selectors) {
+      const el = document.querySelector(sel)
+      if (el) return el
+    }
+    return null
+  }
+
+  let lastText = ''
+
+  function observe(container: Element) {
+    captionObserver = new MutationObserver(() => {
+      const text = container.textContent?.trim() ?? ''
+      if (text && text !== lastText) {
+        lastText = text
+        const msg: LiveCaptureChunkMessage = {
+          type: 'LIVE_CAPTURE_CHUNK',
+          text,
+          timestamp: Date.now(),
+        }
+        chrome.runtime.sendMessage(msg)
+      }
+    })
+    captionObserver.observe(container, { childList: true, subtree: true, characterData: true })
+  }
+
+  const container = findContainer()
+  if (container) {
+    observe(container)
+  } else {
+    const waitObserver = new MutationObserver(() => {
+      const c = findContainer()
+      if (c) { waitObserver.disconnect(); observe(c) }
+    })
+    waitObserver.observe(document.body, { childList: true, subtree: true })
+  }
+}
+
+function stopLiveCapture() {
+  captionObserver?.disconnect()
+  captionObserver = null
+}
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'START_LIVE_CAPTURE') startLiveCapture()
+  if (message.type === 'STOP_LIVE_CAPTURE') stopLiveCapture()
+})
