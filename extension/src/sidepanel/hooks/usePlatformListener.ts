@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { ExtensionMessage, PlatformDetectedMessage } from '@shared/types'
 import { detectMode } from '@shared/types'
 import { useAppStore } from '../store'
@@ -10,14 +10,25 @@ export function usePlatformListener() {
     setExtractionStatus,
     setExtractionError,
     setLatestPack,
+    updateStreamingPack,
     setSession,
+    resetExtraction,
+    platformState,
   } = useAppStore()
+
+  // Ref so handleMessage always sees the latest URL without re-registering the listener
+  const currentUrlRef = useRef(platformState.url)
+  currentUrlRef.current = platformState.url
 
   useEffect(() => {
     function handleMessage(message: ExtensionMessage) {
       switch (message.type) {
         case 'PLATFORM_DETECTED': {
           const m = message as PlatformDetectedMessage
+          // Clear previous extraction result when navigating to a different URL
+          if (m.url && m.url !== currentUrlRef.current) {
+            resetExtraction()
+          }
           setPlatformState({
             platform: m.platform,
             url: m.url,
@@ -30,8 +41,14 @@ export function usePlatformListener() {
           }
           break
         }
+        case 'EXTRACTION_RECORDING':
+          setExtractionStatus('recording', 0, 'Recording…')
+          break
         case 'EXTRACTION_PROGRESS':
           setExtractionStatus('extracting', message.percent, message.statusText)
+          break
+        case 'EXTRACTION_STREAMING':
+          updateStreamingPack(message.pack)
           break
         case 'EXTRACTION_COMPLETE':
           setLatestPack(message.pack)
@@ -68,5 +85,5 @@ export function usePlatformListener() {
     })
 
     return () => chrome.runtime.onMessage.removeListener(handleMessage)
-  }, [setPlatformState, setExtractionStatus, setExtractionError, setLatestPack, setSession])
+  }, [setPlatformState, setExtractionStatus, setExtractionError, setLatestPack, updateStreamingPack, setSession, resetExtraction, setSelectedMode])
 }

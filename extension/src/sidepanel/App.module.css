@@ -276,6 +276,82 @@
 
 .upgradeBtn:hover { opacity: 0.9; }
 
+/* ─── Live extraction card (skeleton) ───────────────────────────────────── */
+.liveCard {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.liveTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skeletonGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+@keyframes shimmer {
+  0%   { opacity: 0.25; }
+  50%  { opacity: 0.55; }
+  100% { opacity: 0.25; }
+}
+
+.skeletonLine {
+  height: 9px;
+  border-radius: 5px;
+  background: var(--border-hi);
+  animation: shimmer 1.6s ease infinite;
+}
+
+.skeletonBulletLine {
+  height: 9px;
+  border-radius: 5px;
+  background: var(--border-hi);
+  animation: shimmer 1.6s ease infinite;
+  margin-left: 14px;
+  position: relative;
+}
+
+.skeletonBulletLine::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success);
+  opacity: 0.35;
+}
+
+/* ─── Recording indicator ────────────────────────────────────────────────── */
+.recordingIndicator {
+  font-size: 12px;
+  color: var(--error);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  animation: pulse 1.2s ease infinite;
+  margin: 0;
+}
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
 /* ─── Session history ────────────────────────────────────────────────────── */
 .history {
   display: flex;

@@ -7,12 +7,12 @@ import { PlatformBadge } from './components/PlatformBadge'
 import { ExtractionProgress } from './components/ExtractionProgress'
 import { ResultCard } from './components/ResultCard'
 import { ThemeToggle } from './components/ThemeToggle'
-import { NewFolderModal } from './components/NewFolderModal'
 import { MemoryView } from './components/memory/MemoryView'
 import { AuthView } from './components/AuthView'
+import { NewFolderModal } from './components/NewFolderModal'
+import { SUPERGLUE_HOOKS } from '../config/superglue'
 import { supabase } from './hooks/useAuth'
-import { mapPackRow } from './hooks/useLibrary'
-import type { OutcomeMode } from '@shared/types'
+import type { OutcomeMode, Pack } from '@shared/types'
 import styles from './App.module.css'
 
 const MODE_LABELS: Record<OutcomeMode, string> = {
@@ -32,17 +32,17 @@ export function App() {
   const {
     user, theme, view, setView,
     platformState, selectedMode,
-    extraction, resetExtraction,
-    session, latestPack,
+    extraction, dismissError,
+    latestPack, packs,
     addPack, addCollection,
   } = useAppStore()
 
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [showNewFolderModal, setShowNewFolderModal] = useState(false)
+  const [suggestedFolderName, setSuggestedFolderName] = useState<string | undefined>(undefined)
 
   function handleManualExtract() {
-    resetExtraction()
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id
       if (!tabId) return
@@ -50,51 +50,67 @@ export function App() {
     })
   }
 
-  // Apply theme class to document root
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
-  async function handleSave(pack: typeof latestPack, collectionId: string | null) {
-    if (!pack) return
+  useEffect(() => {
+    if (!user) return
+    fetch(SUPERGLUE_HOOKS.getFolders, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user.id }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const folders = Array.isArray(data) ? data : (data?.folders ?? [])
+        if (folders.length > 0) {
+          const { setCollections } = useAppStore.getState()
+          setCollections(folders)
+        }
+      })
+      .catch(() => {})
+  }, [user])
+
+  async function handleSave(pack: Pack, folderId: string | null) {
     if (!user) { setView('auth'); return }
 
-    const { data, error } = await supabase.from('packs').insert({
-      user_id: user.id,
-      title: pack.title,
-      url: pack.url,
-      platform: pack.platform,
-      mode: pack.mode,
-      bullets: pack.bullets,
-      saved_at: new Date().toISOString(),
-    }).select().single()
+    const res = await fetch(SUPERGLUE_HOOKS.saveSummary, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: user.id,
+        platform: pack.platform,
+        title: pack.title,
+        summary: pack.summary ?? '',
+        key_points: pack.key_takeaways,
+        video_url: pack.url,
+        folder_id: folderId,
+      }),
+    })
 
-    if (!error && data) {
-      const saved = mapPackRow(data as Record<string, unknown>)
-      addPack(saved)
+    if (res.ok) {
+      addPack(pack)
       setSavedIds((prev) => new Set(prev).add(pack.id))
-
-      // Add to collection if selected
-      if (collectionId) {
-        await supabase.from('collection_items').insert({
-          collection_id: collectionId,
-          type: 'pack',
-          ref_id: saved.id,
-          position: 0,
-        })
-      }
     }
   }
 
   async function handleCreateFolder(name: string) {
     if (!user) { setView('auth'); return }
-    const { data } = await supabase.from('collections').insert({
-      user_id: user.id,
-      name,
-    }).select().single()
-    if (data) {
-      addCollection({ id: data.id, userId: data.user_id, name: data.name, items: [], createdAt: data.created_at })
-      setSelectedFolder(data.id)
+
+    const res = await fetch(SUPERGLUE_HOOKS.createFolder, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description: '', color: '', user_id: user.id }),
+    })
+
+    if (res.ok) {
+      const data = await res.json()
+      const newCollection = data?.folder ?? data
+      if (newCollection?.id) {
+        addCollection(newCollection)
+        setSelectedFolder(newCollection.id)
+      }
     }
     setShowNewFolderModal(false)
   }
@@ -119,11 +135,42 @@ export function App() {
     )
   }
 
+  // ─── No video detected ───────────────────────────────────────────────────────
+
+  if (platformState.platform === 'unknown') {
+    return (
+      <div className={styles.root}>
+        <div className={styles.topBar}>
+          <span className={styles.logo}>
+            <span className={styles.logoMark} aria-hidden="true">
+              <svg width="10" height="13" viewBox="0 0 10 13" fill="none">
+                <path d="M6.5 1L1.5 6.5H5L3.5 12L8.5 6.5H5L6.5 1Z" fill="white"/>
+              </svg>
+            </span>
+            Extract
+          </span>
+          <div className={styles.topBarActions}>
+            <ThemeToggle />
+          </div>
+        </div>
+        <div className={styles.content}>
+          <p className={styles.hint}>Open a video to get started.</p>
+        </div>
+      </div>
+    )
+  }
+
   // ─── Main view ───────────────────────────────────────────────────────────────
 
-  // Segments that have completed results (for session history)
-  const completedSegments = session?.segments.filter((s) => s.result !== null) ?? []
-  const isExtracting = extraction.status === 'extracting'
+  const isActive = extraction.status === 'extracting' || extraction.status === 'recording'
+
+  // Only show result card when there is actual visible content — not just a title
+  const hasContent = !!latestPack && (
+    !!latestPack.summary ||
+    (latestPack.key_takeaways?.length ?? 0) > 0 ||
+    (latestPack.relevant_points?.length ?? 0) > 0 ||
+    (latestPack.important_links?.length ?? 0) > 0
+  )
 
   return (
     <div className={styles.root}>
@@ -139,11 +186,13 @@ export function App() {
         </span>
         <div className={styles.topBarActions}>
           <ThemeToggle />
-          <button className={styles.iconBtn} onClick={() => setView('library')} title="Library">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-            </svg>
-          </button>
+          {packs.length > 0 && (
+            <button className={styles.iconBtn} onClick={() => setView('library')} title="Library">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
+          )}
           {user ? (
             <button className={styles.iconBtn} onClick={() => supabase.auth.signOut()} title={`Signed in as ${user.email}`}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -171,32 +220,73 @@ export function App() {
           title={platformState.title}
         />
 
-        {platformState.platform !== 'unknown' && (
+        {/* Mode badge — hidden while active */}
+        {!isActive && (
           <div className={styles.modeBadge}>
-            <span className={styles.modeAuto}>Auto</span>
             <span className={styles.modeName}>{MODE_LABELS[selectedMode]}</span>
           </div>
         )}
 
-        {/* Manual Extract button */}
-        {platformState.platform !== 'unknown' && (
-          <button
-            className={`${styles.extractBtn} ${isExtracting ? styles.extractBtnBusy : ''}`}
-            onClick={handleManualExtract}
-            disabled={isExtracting}
-          >
-            {isExtracting
-              ? <><span className={styles.extractSpinner} /> Extracting…</>
-              : extraction.status === 'complete' ? 'Extract Again' : 'Extract'}
+        {/* Extract button — hidden while active */}
+        {!isActive && (
+          <button className={styles.extractBtn} onClick={handleManualExtract}>
+            {hasContent ? 'Extract Again' : 'Extract'}
           </button>
         )}
 
-        {/* Active extraction spinner */}
-        {isExtracting && (
-          <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || 'Analysing pause…'} />
+        {/* Extracting, no prior real content → full skeleton */}
+        {extraction.status === 'extracting' && !hasContent && (
+          <div className={styles.liveCard}>
+            <p className={styles.liveTitle}>{platformState.title}</p>
+            <div className={styles.skeletonGroup}>
+              {[88, 72, 80].map((w, i) => <div key={i} className={styles.skeletonLine} style={{ width: `${w}%`, animationDelay: `${i * 180}ms` }} />)}
+            </div>
+            <div className={styles.skeletonGroup}>
+              {[90, 68, 82, 75, 60].map((w, i) => <div key={i} className={styles.skeletonBulletLine} style={{ width: `${w}%`, animationDelay: `${i * 140}ms` }} />)}
+            </div>
+            <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || 'Analysiere…'} />
+          </div>
         )}
 
-        {/* Error / hint state */}
+        {/* Extracting with existing result → slim progress bar only (result stays visible below) */}
+        {extraction.status === 'extracting' && hasContent && (
+          <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || 'Aktualisiere…'} />
+        )}
+
+        {/* Recording → indicator + stop button (result stays visible below if it exists) */}
+        {extraction.status === 'recording' && (
+          <div className={styles.liveCard}>
+            <p className={styles.liveTitle}>{platformState.title}</p>
+            <p className={styles.recordingIndicator}>&#9679; Recording…</p>
+            <button className={styles.extractBtn} onClick={handleManualExtract}>
+              Stop &amp; Analyze
+            </button>
+          </div>
+        )}
+
+        {/* Result card — only shown when real content exists (summary / takeaways / points / links) */}
+        {hasContent && latestPack && (
+          <ResultCard
+            pack={latestPack}
+            onSave={handleSave}
+            isSaved={savedIds.has(latestPack.id)}
+            selectedFolder={selectedFolder}
+            onFolderChange={setSelectedFolder}
+            onCreateFolder={() => { setSuggestedFolderName(latestPack.title); setShowNewFolderModal(true) }}
+            suggestedFolderName={suggestedFolderName}
+          />
+        )}
+
+        {/* Hint — only when no real content and idle */}
+        {!hasContent && extraction.status === 'idle' && (
+          <p className={styles.hint}>
+            {platformState.strategy === 'instant'
+              ? 'Click Extract to analyze this video.'
+              : 'Click Extract to start recording audio.'}
+          </p>
+        )}
+
+        {/* Error state */}
         {extraction.status === 'error' && (
           <div>
             {extraction.isHint ? (
@@ -205,69 +295,22 @@ export function App() {
               <div className={styles.upgradePrompt}>
                 <p className={styles.errorText}>{extraction.error}</p>
                 <button className={styles.upgradeBtn} onClick={() => setView('auth')}>
-                  {!user ? 'Sign in to continue' : 'Upgrade to Pro'}
+                  {!user ? 'Sign in' : 'Upgrade to Pro'}
                 </button>
               </div>
             ) : (
               <p className={styles.errorText}>{extraction.error}</p>
             )}
-            <button className={styles.retryBtn} onClick={resetExtraction}>Dismiss</button>
-          </div>
-        )}
-
-        {/* Idle hint */}
-        {extraction.status === 'idle' && platformState.platform !== 'unknown' && (
-          <p className={styles.hint}>
-            {platformState.strategy === 'instant'
-              ? 'Pause the video — insights appear automatically.'
-              : 'Pause the video — audio is captured and analysed automatically.'}
-          </p>
-        )}
-
-        {/* Latest result (most recent pause) */}
-        {latestPack && extraction.status === 'complete' && (
-          <ResultCard
-            pack={latestPack}
-            onSave={handleSave}
-            isSaved={savedIds.has(latestPack.id)}
-            selectedFolder={selectedFolder}
-            onFolderChange={setSelectedFolder}
-            onCreateFolder={() => setShowNewFolderModal(true)}
-            suggestedFolderName={MODE_LABELS[selectedMode]}
-          />
-        )}
-
-        {/* Session history — previous pauses in same video */}
-        {completedSegments.length > 1 && (
-          <div className={styles.history}>
-            <p className={styles.historyLabel}>Earlier in this video</p>
-            {[...completedSegments].reverse().slice(1).map((seg) => {
-              if (!seg.result) return null
-              return (
-                <div key={seg.id} className={styles.historyCard}>
-                  <p className={styles.historyTimestamp}>
-                    {new Date(seg.pausedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                  <ul className={styles.historyBullets}>
-                    {seg.result.bullets.slice(0, 3).map((b, i) => (
-                      <li key={i} className={styles.historyBullet}>{b}</li>
-                    ))}
-                    {seg.result.bullets.length > 3 && (
-                      <li className={styles.historyMore}>+{seg.result.bullets.length - 3} more</li>
-                    )}
-                  </ul>
-                </div>
-              )
-            })}
+            <button className={styles.retryBtn} onClick={dismissError}>Dismiss</button>
           </div>
         )}
       </div>
 
       {showNewFolderModal && (
         <NewFolderModal
+          suggestedName={suggestedFolderName}
           onConfirm={handleCreateFolder}
           onCancel={() => setShowNewFolderModal(false)}
-          suggestedName={MODE_LABELS[selectedMode]}
         />
       )}
     </div>

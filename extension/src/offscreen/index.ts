@@ -15,6 +15,7 @@ let recorder: MediaRecorder | null = null
 let chunks: Blob[] = []
 let mimeType = 'audio/webm;codecs=opus'
 let captureStartMs = 0
+let audioCtx: AudioContext | null = null
 
 // ─── Message handler ──────────────────────────────────────────────────────────
 
@@ -62,6 +63,11 @@ async function startCapture(streamId: string) {
     ? 'audio/webm;codecs=opus'
     : 'audio/webm'
 
+  // Passthrough: route captured audio back to speakers so the user can still hear it.
+  // Required in Chrome 74+ where tabCapture no longer plays through speakers by default.
+  audioCtx = new AudioContext()
+  audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination)
+
   chunks = []
   captureStartMs = Date.now()
 
@@ -77,6 +83,8 @@ function stopCapture() {
   recorder?.stream.getTracks().forEach((t) => t.stop())
   recorder = null
   chunks = []
+  audioCtx?.close()
+  audioCtx = null
 }
 
 async function flushAudio(): Promise<AudioDataMessage | null> {

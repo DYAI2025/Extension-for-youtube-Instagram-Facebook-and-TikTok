@@ -49,6 +49,7 @@ interface AppState {
   setExtractionStatus: (status: ExtractionStatus, percent?: number, statusText?: string) => void
   setExtractionError: (error: string, upgradeRequired?: boolean, isHint?: boolean) => void
   resetExtraction: () => void
+  dismissError: () => void
 
   // Session (current video watching session — accumulates across pauses)
   session: VideoSession | null
@@ -57,6 +58,7 @@ interface AppState {
   // Latest completed pack (from most recent pause)
   latestPack: Pack | null
   setLatestPack: (pack: Pack) => void
+  updateStreamingPack: (pack: Pack) => void
 
   // Library
   packs: Pack[]
@@ -116,13 +118,16 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({ extraction: { ...s.extraction, status, percent, statusText } })),
   setExtractionError: (error, upgradeRequired = false, isHint = false) =>
     set((s) => ({ extraction: { ...s.extraction, status: 'error', error, upgradeRequired, isHint } })),
-  resetExtraction: () => set({ extraction: defaultExtraction }),
+  resetExtraction: () => set({ extraction: defaultExtraction, latestPack: null, session: null }),
+  dismissError: () => set((s) => ({ extraction: { ...s.extraction, status: 'idle', error: null, upgradeRequired: false, isHint: false } })),
 
   session: null,
   setSession: (session) => set({ session }),
 
   latestPack: null,
   setLatestPack: (pack) => set({ latestPack: pack, extraction: { ...defaultExtraction, status: 'complete' } }),
+  // Updates latestPack during streaming without changing extraction status
+  updateStreamingPack: (pack) => set({ latestPack: pack }),
 
   packs: [],
   collections: [],

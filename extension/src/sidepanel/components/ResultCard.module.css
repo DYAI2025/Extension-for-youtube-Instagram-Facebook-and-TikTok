@@ -8,6 +8,19 @@
   gap: 12px;
 }
 
+/* ── Fade-in animation for each content block ─────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fadeIn {
+  opacity: 0;
+  animation: fadeInUp 320ms ease forwards;
+  animation-delay: var(--delay, 0ms);
+}
+
+/* ── Header ───────────────────────────────────────────────────────────────── */
 .header {
   display: flex;
   align-items: flex-start;
@@ -35,10 +48,10 @@
   letter-spacing: 0.03em;
 }
 
-/* Save button */
+/* ── Save button ─────────────────────────────────────────────────────────── */
 .saveBtn {
   flex-shrink: 0;
-  padding: 5px 12px;
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-hi);
   background: transparent;
@@ -48,7 +61,6 @@
   font-family: inherit;
   cursor: pointer;
   transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
-  letter-spacing: 0.03em;
 }
 
 .saveBtn:hover:not(:disabled) {
@@ -65,7 +77,7 @@
   background: rgba(52, 211, 153, 0.08);
 }
 
-/* Summary */
+/* ── Summary ─────────────────────────────────────────────────────────────── */
 .summary {
   font-size: 11px;
   color: var(--text-3);
@@ -76,7 +88,7 @@
   margin: 0;
 }
 
-/* Bullets */
+/* ── Bullets ─────────────────────────────────────────────────────────────── */
 .bullets {
   list-style: none;
   display: flex;
@@ -108,21 +120,27 @@
   opacity: 0.7;
 }
 
-/* Related links */
+.bulletMuted { color: var(--text-3); }
+.bulletMuted::before { opacity: 0.4; }
+
+/* ── Section labels ──────────────────────────────────────────────────────── */
+.sectionLabel {
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 6px;
+}
+
+.relevantPoints { border-top: 1px solid var(--border); padding-top: 10px; }
+
+/* ── Links ───────────────────────────────────────────────────────────────── */
 .links {
   border-top: 1px solid var(--border);
   padding-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-.linksLabel {
-  font-size: 10px;
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin: 0 0 2px;
 }
 
 .link {
@@ -141,73 +159,80 @@
 
 .link:hover { opacity: 1; text-decoration: underline; }
 
-/* Save row with folder picker */
+/* ── Save row / folder picker ────────────────────────────────────────────── */
 .saveRow {
   border-top: 1px solid var(--border);
   padding-top: 10px;
 }
 
-/* Inline folder picker */
 .fpRoot { position: relative; }
 
 .fpTrigger {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-2);
+  background: none;
+  border: none;
+  color: var(--text-3);
   font-size: 11px;
   font-family: inherit;
-  padding: 4px 8px;
   cursor: pointer;
-  transition: border-color var(--transition);
+  padding: 3px 0;
+  transition: color 150ms;
 }
 
-.fpTrigger:hover { border-color: var(--border-hi); color: var(--text); }
+.fpTrigger:hover { color: var(--text-2); }
 
 .fpDropdown {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
-  min-width: 160px;
-  background: var(--bg-2);
+  background: var(--bg-3);
   border: 1px solid var(--border-hi);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: 4px;
-  z-index: 100;
-  box-shadow: 0 -8px 24px rgba(0,0,0,0.3);
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
 }
 
 .fpOption {
-  width: 100%;
-  text-align: left;
   background: none;
   border: none;
   font-family: inherit;
   font-size: 11px;
   color: var(--text-2);
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  border-radius: 4px;
   cursor: pointer;
+  text-align: left;
+  transition: background 120ms;
 }
 
-.fpOption:hover, .fpActive { background: var(--bg-3); color: var(--text); }
+.fpOption:hover { background: var(--border); }
 
-.fpDivider { height: 1px; background: var(--border); margin: 3px 0; }
+.fpActive { color: var(--success); }
+
+.fpDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
 
 .fpCreate {
-  width: 100%;
-  text-align: left;
   background: none;
   border: none;
   font-family: inherit;
   font-size: 11px;
   color: var(--success);
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  border-radius: 4px;
   cursor: pointer;
+  text-align: left;
+  transition: background 120ms;
 }
 
-.fpCreate:hover { background: var(--bg-3); }
+.fpCreate:hover { background: rgba(52, 211, 153, 0.08); }

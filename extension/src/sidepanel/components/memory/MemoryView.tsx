@@ -60,7 +60,7 @@ function PackRow({ pack }: { pack: Pack }) {
         <span className={styles.packMode}>{pack.mode}</span>
       </div>
       <p className={styles.packTitle}>{pack.title}</p>
-      <p className={styles.packPreview}>{pack.bullets[0]}</p>
+      <p className={styles.packPreview}>{pack.key_takeaways[0]}</p>
     </div>
   )
 }

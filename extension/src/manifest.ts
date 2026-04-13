@@ -6,12 +6,13 @@ export default defineManifest({
   version: '0.2.0',
   description: 'Pause a video — get instant structured insights. Works on YouTube, TikTok, Instagram and Facebook.',
 
-  permissions: ['activeTab', 'scripting', 'storage', 'tabs', 'sidePanel', 'tabCapture', 'offscreen', 'identity'],
+  permissions: ['activeTab', 'scripting', 'storage', 'tabs', 'sidePanel', 'tabCapture', 'offscreen', 'identity', 'alarms'],
   host_permissions: [
     'https://www.youtube.com/*',
     'https://www.tiktok.com/*',
     'https://www.instagram.com/*',
     'https://www.facebook.com/*',
+    'https://api.superglue.ai/*',
   ],
 
   action: {

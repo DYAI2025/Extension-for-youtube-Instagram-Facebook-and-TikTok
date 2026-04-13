@@ -1,9 +1,11 @@
+import { useState, useEffect } from 'react'
 import type { Pack } from '@shared/types'
+import { useAppStore } from '../store'
 import styles from './ResultCard.module.css'
 
 interface Props {
   pack: Pack
-  onSave: (pack: Pack, collectionId: string | null) => void
+  onSave: (pack: Pack, folderId: string | null) => void
   isSaved: boolean
   selectedFolder: string | null
   onFolderChange: (id: string | null) => void
@@ -12,6 +14,34 @@ interface Props {
 }
 
 export function ResultCard({ pack, onSave, isSaved, selectedFolder, onFolderChange, onCreateFolder, suggestedFolderName }: Props) {
+  const [revealedCount, setRevealedCount] = useState(0)
+  const [showDetails, setShowDetails]     = useState(false)
+  const [showLinks, setShowLinks]         = useState(false)
+
+  // Reset and replay reveal animation every time a new pack arrives
+  useEffect(() => {
+    setRevealedCount(0)
+    setShowDetails(false)
+    setShowLinks(false)
+
+    const total = pack.key_takeaways.length
+    let count = 0
+
+    const iv = setInterval(() => {
+      count++
+      setRevealedCount(count)
+      if (count >= total) {
+        clearInterval(iv)
+        setTimeout(() => setShowDetails(true), 250)
+        setTimeout(() => setShowLinks(true), 500)
+      }
+    }, 170)
+
+    return () => clearInterval(iv)
+  }, [pack.id])
+
+  const visibleBullets = pack.key_takeaways.slice(0, revealedCount)
+
   return (
     <div className={styles.root}>
       <div className={styles.header}>
@@ -24,24 +54,45 @@ export function ResultCard({ pack, onSave, isSaved, selectedFolder, onFolderChan
           onClick={() => onSave(pack, selectedFolder)}
           disabled={isSaved}
         >
-          {isSaved ? '✓ Saved' : 'Save'}
+          {isSaved ? '✓' : 'Save'}
         </button>
       </div>
 
       {pack.summary && (
-        <p className={styles.summary}>{pack.summary}</p>
+        <p className={`${styles.summary} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
+          {pack.summary}
+        </p>
       )}
 
-      <ul className={styles.bullets}>
-        {pack.bullets.map((b, i) => (
-          <li key={i} className={styles.bullet}>{b}</li>
-        ))}
-      </ul>
+      {visibleBullets.length > 0 && (
+        <ul className={styles.bullets}>
+          {visibleBullets.map((b, i) => (
+            <li
+              key={i}
+              className={`${styles.bullet} ${styles.fadeIn}`}
+              style={{ '--delay': '0ms' } as React.CSSProperties}
+            >
+              {b}
+            </li>
+          ))}
+        </ul>
+      )}
 
-      {pack.links && pack.links.length > 0 && (
-        <div className={styles.links}>
-          <p className={styles.linksLabel}>Related</p>
-          {pack.links.map((link, i) => (
+      {showDetails && pack.relevant_points && pack.relevant_points.length > 0 && (
+        <div className={`${styles.relevantPoints} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
+          <p className={styles.sectionLabel}>Details</p>
+          <ul className={styles.bullets} style={{ borderTop: 'none', paddingTop: 0 }}>
+            {pack.relevant_points.map((p, i) => (
+              <li key={i} className={`${styles.bullet} ${styles.bulletMuted}`}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {showLinks && pack.important_links && pack.important_links.length > 0 && (
+        <div className={`${styles.links} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
+          <p className={styles.sectionLabel}>Links</p>
+          {pack.important_links.map((link, i) => (
             <a key={i} href={link.url} target="_blank" rel="noreferrer" className={styles.link}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
@@ -68,9 +119,7 @@ export function ResultCard({ pack, onSave, isSaved, selectedFolder, onFolderChan
   )
 }
 
-// Inline lightweight folder picker (avoids import of heavier FolderSelector in this file)
-import { useState } from 'react'
-import { useAppStore } from '../store'
+// ─── Folder picker ─────────────────────────────────────────────────────────────
 
 function FolderPicker({ selected, onSelect, onCreateNew, suggestedName }: {
   selected: string | null
@@ -101,7 +150,7 @@ function FolderPicker({ selected, onSelect, onCreateNew, suggestedName }: {
           ))}
           <div className={styles.fpDivider} />
           <button className={styles.fpCreate} onClick={() => { onCreateNew(); setOpen(false) }}>
-            {suggestedName ? `+ New folder: ${suggestedName}` : '+ New folder'}
+            {suggestedName ? `+ New: ${suggestedName}` : '+ New folder'}
           </button>
         </div>
       )}

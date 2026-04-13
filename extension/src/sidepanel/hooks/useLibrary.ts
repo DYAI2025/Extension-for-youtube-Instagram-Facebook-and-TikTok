@@ -12,7 +12,7 @@ export function mapPackRow(row: Record<string, unknown>): Pack {
     url: row.url as string,
     platform: row.platform as Pack['platform'],
     mode: row.mode as Pack['mode'],
-    bullets: row.bullets as string[],
+    key_takeaways: (row.bullets as string[]) ?? [],  // DB column is 'bullets'
     savedAt: row.saved_at as string,
   }
 }
