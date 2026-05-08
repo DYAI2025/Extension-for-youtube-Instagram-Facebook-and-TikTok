@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: 'Extract',
   version: '0.2.0',
-  description: 'Pause a video — get instant structured insights. Works on YouTube, TikTok, Instagram and Facebook.',
+  description: 'Extract turns videos into clear summaries, topic blocks, related resources, timestamps, and saveable insights.',
 
   permissions: ['activeTab', 'scripting', 'storage', 'tabs', 'sidePanel', 'tabCapture', 'offscreen', 'identity', 'alarms'],
   host_permissions: [

@@ -21,17 +21,27 @@ export function AuthView() {
     setSuccess(null)
     try {
       const redirectUrl = chrome.identity.getRedirectURL()
+      console.log('[AUTH-DEBUG] OAuth start | provider:', provider, '| redirectUrl:', redirectUrl)
 
       const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider,
         options: { redirectTo: redirectUrl, skipBrowserRedirect: true },
       })
       if (oauthError || !data.url) {
-        setError(oauthError?.message ?? 'OAuth konnte nicht gestartet werden')
+        console.warn('[AUTH-DEBUG] signInWithOAuth failed:', oauthError?.message, '| redirectUrl:', redirectUrl)
+        setError(
+          `${oauthError?.message ?? 'OAuth konnte nicht gestartet werden'}\n` +
+          `Redirect-URL: ${redirectUrl}\n` +
+          `Diese URL muss in Supabase → Authentication → URL Configuration → Redirect URLs erlaubt sein.`,
+        )
         return
       }
 
-      // OAuth-Popup öffnen und auf Redirect warten
+      try {
+        const authUrl = new URL(data.url)
+        console.log('[AUTH-DEBUG] OAuth provider URL | host:', authUrl.host, '| path:', authUrl.pathname)
+      } catch { /* ignore */ }
+
       const result = await new Promise<string | null>((resolve, reject) => {
         chrome.identity.launchWebAuthFlow(
           { url: data.url, interactive: true },
@@ -50,35 +60,66 @@ export function AuthView() {
         return
       }
 
-      // Implicit flow: Tokens im URL-Hash (access_token & refresh_token)
       const url = new URL(result)
       const hash = new URLSearchParams(url.hash.slice(1))
+      const query = url.searchParams
+
+      const hashKeys = Array.from(hash.keys())
+      const queryKeys = Array.from(query.keys())
+      console.log('[AUTH-DEBUG] OAuth response | host:', url.host, '| path:', url.pathname, '| hashKeys:', hashKeys, '| queryKeys:', queryKeys)
+
+      const oauthErr = hash.get('error') ?? query.get('error')
+      const oauthErrDesc = hash.get('error_description') ?? query.get('error_description')
+      if (oauthErr) {
+        console.warn('[AUTH-DEBUG] OAuth provider returned error:', oauthErr, '|', oauthErrDesc, '| redirectUrl:', redirectUrl)
+        setError(
+          `Provider-Fehler: ${oauthErr}\n` +
+          `${oauthErrDesc ?? '(keine Beschreibung)'}\n` +
+          `Redirect-URL: ${redirectUrl}\n` +
+          `Prüfe Supabase → Auth → URL Configuration → Redirect URLs.`,
+        )
+        return
+      }
+
       const accessToken = hash.get('access_token')
       const refreshToken = hash.get('refresh_token')
-
       if (accessToken && refreshToken) {
+        console.log('[AUTH-DEBUG] OAuth implicit flow | setSession')
         const { error: sessionError } = await supabase.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken,
         })
-        if (sessionError) setError(sessionError.message)
+        if (sessionError) {
+          console.warn('[AUTH-DEBUG] setSession error:', sessionError.message)
+          setError(sessionError.message)
+        }
         return
       }
 
-      // Fallback: PKCE-Code im Query-Parameter
-      const code = url.searchParams.get('code')
+      const code = query.get('code')
       if (code) {
+        console.log('[AUTH-DEBUG] OAuth PKCE flow | exchangeCodeForSession')
         const { error: sessionError } = await supabase.auth.exchangeCodeForSession(code)
-        if (sessionError) setError(sessionError.message)
+        if (sessionError) {
+          console.warn('[AUTH-DEBUG] exchangeCodeForSession error:', sessionError.message)
+          setError(sessionError.message)
+        }
         return
       }
 
-      setError('Keine Tokens in der Antwort — Redirect-URL in Supabase prüfen')
+      const allKeys = [...hashKeys, ...queryKeys].join(', ') || '(keine)'
+      setError(
+        `Keine Tokens / kein Code in der Antwort.\n` +
+        `Redirect-URL: ${redirectUrl}\n` +
+        `Supabase muss diese URL unter Authentication → URL Configuration → Redirect URLs erlauben.\n` +
+        `Erhaltene Keys: ${allKeys}`
+      )
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unbekannter Fehler'
       if (msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('closed')) {
-        // User hat Popup geschlossen — kein Fehler anzeigen
+        // User schließt Popup — kein Fehler anzeigen
       } else {
+        console.warn('[AUTH-DEBUG] OAuth exception:', msg)
         setError(msg)
       }
     } finally {

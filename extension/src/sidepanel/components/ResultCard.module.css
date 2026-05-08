@@ -66,15 +66,15 @@
 .saveBtn:hover:not(:disabled) {
   border-color: var(--success);
   color: var(--success);
-  background: rgba(34, 197, 94, 0.08);
+  background: var(--success-bg);
 }
 
 .saveBtn:disabled { cursor: default; }
 
 .saved {
-  border-color: rgba(34, 197, 94, 0.3);
+  border-color: var(--success);
   color: var(--success);
-  background: rgba(34, 197, 94, 0.08);
+  background: var(--success-bg);
 }
 
 /* ── Summary ─────────────────────────────────────────────────────────────── */
@@ -111,11 +111,253 @@
   gap: 8px;
 }
 
-.bulletText { flex: 1; min-width: 0; }
+.bulletText { flex: 1; min-width: 0; display: block; }
+
+.bulletBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
 .bulletSelected {
-  background: rgba(34, 197, 94, 0.06);
+  background: var(--success-bg);
   border-radius: var(--radius-sm);
+}
+
+/* ── Related links (inline, under each bullet) ──────────────────────────── */
+.relatedLinks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+  padding-left: 0;
+}
+
+.relatedLinkCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--accent-orange-soft);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.relatedLinkCard:hover { border-color: var(--success); }
+.relatedLinkCard.relatedLinkSelected { border-color: var(--success); }
+
+.relatedLinkBody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.relatedLinkAnchor {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--success);
+  text-decoration: none;
+  line-height: 1.35;
+}
+
+.relatedLinkAnchor svg { flex-shrink: 0; }
+.relatedLinkAnchor:hover { color: var(--accent-orange-hover); text-decoration: underline; }
+
+.relatedLinkTitle {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.relatedLinkTimestamp {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--accent-orange-soft);
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.relatedLinkSource {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  align-self: flex-start;
+}
+
+.relatedLinkDesc {
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.relatedLinkWhy {
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.relatedLinkAction {
+  font-size: 10px;
+  color: var(--success);
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.urlStatusBadge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.urlStatusValid    { color: var(--success); background: var(--success-bg); }
+.urlStatusInvalid  { color: var(--error); background: var(--error-bg); }
+.urlStatusRedirect { color: var(--text-3); background: var(--bg-3); }
+
+/* ── Fallback "Other resources" block ───────────────────────────────────── */
+.fallbackHeader {
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 6px;
+}
+
+/* ── Scope badge (Full video / Partial analysis) ────────────────────────── */
+.scopeBadge {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.scopeFull {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.scopePartial {
+  color: var(--text-3);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+}
+
+/* ── Topic blocks (sections rendered as topic cards) ────────────────────── */
+.topicBlocks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.topicBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 150ms ease;
+}
+
+.topicBlock:hover { border-color: var(--border-hi); }
+
+.topicHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.topicHeaderText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.topicTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.topicTimestamp {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--success);
+  background: var(--success-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+
+.topicSummary {
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.topicKeywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topicKeyword {
+  font-size: 10px;
+  color: var(--success);
+  background: var(--accent-orange-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 7px;
+  letter-spacing: 0.02em;
+}
+
+.topicPoints {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.topicPoints .bullet {
+  font-size: 11px;
+  padding-left: 12px;
+}
+
+.topicPoints .bullet::before {
+  top: 7px;
+  width: 3px;
+  height: 3px;
 }
 
 .itemCheckbox {
@@ -356,4 +598,4 @@
   transition: background 120ms;
 }
 
-.fpCreate:hover { background: rgba(34, 197, 94, 0.08); }
+.fpCreate:hover { background: var(--success-bg); }

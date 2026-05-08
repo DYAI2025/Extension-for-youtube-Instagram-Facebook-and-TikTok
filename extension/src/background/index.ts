@@ -12,9 +12,17 @@ import type {
   Pack,
   ExtractionPackV2,
   CurrentAnalysisMessage,
+  YouTubeSourceBundle,
 } from '@shared/types'
 import { detectMode } from '@shared/types'
+import { parseDescriptionLinks, parseTimestampedResources } from '@shared/youtubeDescription'
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000'
+
+// Diagnostic: print the API base on every service-worker boot so the user can
+// verify in chrome://extensions → service worker console which server URL the
+// extension is talking to. Fixes hard-to-diagnose port mismatches when .env
+// changes are not picked up by the Vite build.
+console.log('[bg] boot | API_BASE:', API_BASE)
 
 // ─── Platform & strategy helpers ──────────────────────────────────────────────
 
@@ -510,6 +518,49 @@ async function fetchTranscriptFromHTML(videoId: string, tabId: number): Promise<
   }
 }
 
+// Reads videoDetails.{shortDescription,title,author,videoId} from
+// ytInitialPlayerResponse in the YouTube tab's MAIN world. The service-worker
+// can't access this directly because the variable lives on the tab's window.
+async function fetchYouTubePageDetails(
+  tabId: number,
+): Promise<{ description: string; title: string; channelName: string; videoId: string } | null> {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        const ipr = (window as unknown as Record<string, unknown>)['ytInitialPlayerResponse'] as
+          | {
+              videoDetails?: {
+                shortDescription?: string
+                title?: string
+                author?: string
+                videoId?: string
+              }
+            }
+          | undefined
+        const vd = ipr?.videoDetails ?? {}
+        // Fallback: read description from the DOM expander if the player JSON
+        // doesn't expose it (rare, but happens on age-gated/embed pages).
+        const domDesc =
+          document.querySelector('#description-inline-expander')?.textContent ??
+          document.querySelector('ytd-text-inline-expander')?.textContent ??
+          ''
+        return {
+          description: (vd.shortDescription ?? '').trim() || (domDesc ?? '').trim(),
+          title: vd.title ?? document.title ?? '',
+          channelName: vd.author ?? '',
+          videoId: vd.videoId ?? '',
+        }
+      },
+    })
+    return result?.[0]?.result ?? null
+  } catch (e) {
+    console.warn('[bg] fetchYouTubePageDetails error:', e)
+    return null
+  }
+}
+
 async function fetchTranscriptFromTab(tabId: number): Promise<{ transcript: string; currentTime: number } | null> {
   try {
     const tab = await chrome.tabs.get(tabId).catch(() => null)
@@ -977,6 +1028,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === 'START_EXTRACTION') {
     // Manual extraction trigger (fallback / user-initiated)
+    console.log('[EXTRACT-DEBUG] bg: START_EXTRACTION received | tabId:', message.tabId, '| mode:', message.mode, '| force:', !!message.force)
     handleStartExtraction(message.tabId, message.mode, !!message.force)
     return
   }
@@ -1074,16 +1126,30 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // ─── Manual extraction (user-triggered via Extract button) ───────────────────
 
 async function handleStartExtraction(tabId: number, mode: OutcomeMode, force = false) {
+  console.log('[EXTRACT-DEBUG] bg: handleStartExtraction enter | tabId:', tabId, '| mode:', mode, '| force:', force, '| API_BASE:', API_BASE)
   if (!tabStates.has(tabId)) {
     const tab = await chrome.tabs.get(tabId).catch(() => null)
-    if (!tab?.url) return
+    console.log('[EXTRACT-DEBUG] bg: tabStates miss — fetched tab | url:', tab?.url, '| title:', tab?.title)
+    if (!tab?.url) {
+      console.warn('[EXTRACT-DEBUG] bg: aborting — no tab.url')
+      return
+    }
     const platform = detectPlatform(tab.url)
-    if (platform === 'unknown') return
+    console.log('[EXTRACT-DEBUG] bg: detected platform:', platform)
+    if (platform === 'unknown') {
+      console.warn('[EXTRACT-DEBUG] bg: aborting — platform unknown')
+      return
+    }
     tabStates.set(tabId, makeTabState(platform, tab.url, tab.title ?? '', { tabId }))
   }
   selectedMode = mode
   const state = tabStates.get(tabId)!
 
+  let videoId: string | null = null
+  if (state.platform === 'youtube') {
+    try { videoId = new URL(state.url).searchParams.get('v') } catch { /* ignore */ }
+  }
+  console.log('[EXTRACT-DEBUG] bg: handleStartExtraction state | platform:', state.platform, '| url:', state.url, '| videoId:', videoId, '| isRecording:', state.isRecording)
   console.log('[bg] handleStartExtraction | platform:', state.platform, '| url:', state.url, '| isRecording:', state.isRecording, '| force:', force)
 
   // Note: content-aware cache check moved into runExtraction. Reason: it needs
@@ -1094,12 +1160,21 @@ async function handleStartExtraction(tabId: number, mode: OutcomeMode, force = f
   tabStates.set(tabId, state)
 
   if (state.platform === 'youtube') {
-    // MODE A: fetch full transcript first
-    console.log('[bg] YouTube: fetching transcript…')
+    // MODE A: fetch full transcript + description in parallel
+    console.log('[EXTRACT-DEBUG] bg: YouTube transcript+description fetch start')
+    console.log('[bg] YouTube: fetching transcript + description…')
+    console.log('[EXTRACT-DEBUG] bg: send EXTRACTION_PROGRESS | percent: 15 | statusText: Transcript wird gelesen…')
     chrome.runtime.sendMessage({ type: 'EXTRACTION_PROGRESS', percent: 15, statusText: 'Transcript wird gelesen…' }).catch(() => {})
-    const transcriptData = await fetchTranscriptFromTab(tabId)
+    const [transcriptData, pageDetails] = await Promise.all([
+      fetchTranscriptFromTab(tabId),
+      fetchYouTubePageDetails(tabId),
+    ])
     const transcript = transcriptData?.transcript ?? ''
-    console.log('[bg] YouTube transcript length:', transcript.length)
+    const descriptionText = pageDetails?.description ?? ''
+    const descriptionLinks = parseDescriptionLinks(descriptionText)
+    const timestampedResources = parseTimestampedResources(descriptionText)
+    console.log('[EXTRACT-DEBUG] bg: YouTube fetch done | transcriptLen:', transcript.length, '| descriptionLen:', descriptionText.length, '| links:', descriptionLinks.length, '| timestamped:', timestampedResources.length)
+    console.log('[bg] YouTube transcript length:', transcript.length, '| description length:', descriptionText.length)
 
     // Re-read state — user may have navigated away during the async fetch
     const freshState = tabStates.get(tabId)
@@ -1108,15 +1183,36 @@ async function handleStartExtraction(tabId: number, mode: OutcomeMode, force = f
       return
     }
 
+    const youtubeSource: YouTubeSourceBundle | undefined = videoId
+      ? {
+          videoId,
+          videoUrl: state.url,
+          title: pageDetails?.title ?? state.title,
+          channelName: pageDetails?.channelName,
+          transcriptText: transcript,
+          transcriptAvailable: transcript.length > 30,
+          descriptionText,
+          descriptionAvailable: descriptionText.length > 0,
+          descriptionLinks,
+          timestampedResources,
+          extractionSourceCoverage: [
+            ...(transcript.length > 30 ? ['transcript' as const] : []),
+            ...(descriptionText.length > 0 ? ['description' as const] : []),
+          ],
+        }
+      : undefined
+
     if (transcript.length > 30) {
       console.log('[bg] youtube final mode: transcript-success | chars:', transcript.length)
+      console.log('[EXTRACT-DEBUG] bg: send EXTRACTION_PROGRESS | percent: 35 | statusText: Vollständiges Video wird analysiert…')
       chrome.runtime.sendMessage({ type: 'EXTRACTION_PROGRESS', percent: 35, statusText: 'Vollständiges Video wird analysiert…' }).catch(() => {})
       if (freshState.isRecording) { freshState.isRecording = false; tabStates.set(tabId, freshState) }
-      await runExtraction(tabId, freshState, { transcript })
+      await runExtraction(tabId, freshState, { transcript, youtubeSource })
     } else {
       // Transcript unavailable — audio capture would mute the YouTube tab, so never enter audio mode for YouTube.
       // Show a clear actionable error instead.
       console.log('[bg] YouTube: transcript unavailable — showing error, NOT entering audio mode')
+      console.log('[EXTRACT-DEBUG] bg: send EXTRACTION_ERROR | reason: no-transcript')
       chrome.runtime.sendMessage({
         type: 'EXTRACTION_ERROR',
         message: 'Kein Transcript gefunden. Aktiviere die YouTube-Untertitel (CC-Taste) für dieses Video und versuche es erneut.',
@@ -1214,7 +1310,11 @@ function parsePartialJson(text: string): { title?: string; summary?: string; key
 
 // ─── Main extraction via server streaming (SSE) ───────────────────────────────
 
-async function runExtraction(tabId: number, state: TabState, content: { transcript?: string; audio?: string }) {
+async function runExtraction(
+  tabId: number,
+  state: TabState,
+  content: { transcript?: string; audio?: string; youtubeSource?: YouTubeSourceBundle },
+) {
   if (state.extracting) return
 
   // YouTube transcripts cover the entire video; live audio captures only the buffer.
@@ -1259,6 +1359,7 @@ async function runExtraction(tabId: number, state: TabState, content: { transcri
 
   try {
     const sessionContext = getSessionContext(state.session)
+    const description = content.youtubeSource?.descriptionText ?? ''
     const payload = {
       url: state.url,
       platform: state.platform,
@@ -1268,27 +1369,45 @@ async function runExtraction(tabId: number, state: TabState, content: { transcri
       transcript: content.transcript,
       audioData: content.audio,
       audioMimeType: content.audio ? 'audio/webm' : undefined,
-      metadata: { title: state.title, description: '' },
+      metadata: { title: state.title, description },
       ...(sessionContext ? { sessionContext } : {}),
+      ...(content.youtubeSource ? { youtubeSource: content.youtubeSource } : {}),
     }
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 90_000)
 
-    const res = await fetch(`${API_BASE}/extract/stream`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    })
+    const endpoint = `${API_BASE}/extract/stream`
+    console.log('[EXTRACT-DEBUG] bg: runExtraction fetch |', endpoint, '| platform:', state.platform, '| mode:', selectedMode, '| transcriptLen:', content.transcript?.length ?? 0, '| audioLen:', content.audio?.length ?? 0, '| authed:', !!token)
+    console.log('[bg] runExtraction fetch |', endpoint, '| platform:', state.platform, '| mode:', selectedMode, '| transcriptLen:', content.transcript?.length ?? 0, '| audioLen:', content.audio?.length ?? 0, '| authed:', !!token)
+
+    let res: Response
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      })
+    } catch (fetchErr) {
+      console.error('[EXTRACT-DEBUG] bg: runExtraction fetch threw:', (fetchErr as Error).message)
+      throw fetchErr
+    }
+
+    console.log('[EXTRACT-DEBUG] bg: runExtraction response | status:', res.status, '| ok:', res.ok, '| ct:', res.headers.get('content-type'))
+    console.log('[bg] runExtraction response | status:', res.status, '| ok:', res.ok)
 
     if (!res.ok) {
       clearTimeout(timeout)
       const err = await res.json().catch(() => ({})) as Record<string, unknown>
-      chrome.runtime.sendMessage({ type: 'EXTRACTION_ERROR', message: (err.message as string) ?? (err.error as string) ?? `Error ${res.status}`, segmentId }).catch(() => {})
+      const msg = (err.message as string) ?? (err.error as string) ?? `Server ${res.status}`
+      console.warn('[EXTRACT-DEBUG] bg: runExtraction non-ok response:', msg)
+      console.warn('[bg] runExtraction non-ok response:', msg)
+      console.log('[EXTRACT-DEBUG] bg: send EXTRACTION_ERROR | message:', msg)
+      chrome.runtime.sendMessage({ type: 'EXTRACTION_ERROR', message: msg, segmentId }).catch(() => {})
       removeSegment(state.session, segmentId)
       return
     }
@@ -1385,11 +1504,38 @@ async function runExtraction(tabId: number, state: TabState, content: { transcri
           // Persist the analysis so it survives URL/tab/SW changes and shows instantly on revisit.
           saveCachedAnalysis(state.url, pack).catch(() => {})
           saveKeyedAnalysis(cacheKey, pack).catch(() => {})
+          console.log('[EXTRACT-DEBUG] bg: send EXTRACTION_COMPLETE | packId:', pack.id, '| key_takeaways:', pack.key_takeaways.length, '| hasV2:', !!pack.v2)
           chrome.runtime.sendMessage({ type: 'EXTRACTION_COMPLETE', pack, segmentId }).catch(() => {})
         } else if (event.type === 'progress') {
           const percent = typeof event.percent === 'number' ? event.percent : 90
           const statusText = typeof event.statusText === 'string' ? event.statusText : 'Verifying links…'
           chrome.runtime.sendMessage({ type: 'EXTRACTION_PROGRESS', percent, statusText }).catch(() => {})
+        } else if (event.type === 'validated') {
+          // Late-arriving URL validation results. Merge resources + propagated
+          // attached-link statuses + unassigned_resources into the cached pack
+          // so the UI updates badges without blocking first paint.
+          const resources = event.resources as ExtractionPackV2['resources'] | undefined
+          const ktl = event.key_takeaway_links as ExtractionPackV2['key_takeaway_links'] | undefined
+          const sections = event.sections as ExtractionPackV2['sections'] | undefined
+          const unassigned = event.unassigned_resources as ExtractionPackV2['unassigned_resources'] | undefined
+          if (resources && Array.isArray(resources)) {
+            const cached = await loadCachedAnalysis(state.url)
+            if (cached?.v2) {
+              const updated: Pack = {
+                ...cached,
+                v2: {
+                  ...cached.v2,
+                  resources,
+                  ...(ktl ? { key_takeaway_links: ktl } : {}),
+                  ...(sections ? { sections } : {}),
+                  ...(unassigned ? { unassigned_resources: unassigned } : {}),
+                },
+              }
+              await saveCachedAnalysis(state.url, updated)
+              await saveKeyedAnalysis(cacheKey, updated)
+              chrome.runtime.sendMessage({ type: 'EXTRACTION_COMPLETE', pack: updated, segmentId }).catch(() => {})
+            }
+          }
         } else if (event.type === 'error') {
           clearTimeout(timeout)
           throw new Error((event.message as string) ?? 'Server error during extraction')

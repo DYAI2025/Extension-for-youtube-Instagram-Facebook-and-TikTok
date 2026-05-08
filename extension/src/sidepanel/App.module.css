@@ -1,4 +1,4 @@
-/* ─── Dark theme (default) — pure black / white with a green accent ──────── */
+/* ─── Dark theme (default) — pure black / white with an orange accent ────── */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -13,7 +13,13 @@
   --text-2:      #B5B5B5;
   --text-3:      #6E6E6E;
 
-  --success:     #22C55E;
+  --accent-orange:       #FF6A1A;
+  --accent-orange-hover: #F45C10;
+  --accent-orange-soft:  rgba(255, 106, 26, 0.10);
+
+  --success:     var(--accent-orange);
+  --success-soft:rgba(255, 106, 26, 0.12);
+  --success-bg:  rgba(255, 106, 26, 0.08);
   --error:       #EF4444;
   --error-bg:    rgba(239, 68, 68, 0.10);
   --error-border:rgba(239, 68, 68, 0.30);
@@ -24,7 +30,7 @@
   --transition:  150ms ease;
 }
 
-/* ─── Light theme — pure white / black with the same green accent ────────── */
+/* ─── Light theme — pure white / black with the same orange accent ───────── */
 :root[data-theme="light"] {
   color-scheme: light;
 
@@ -38,7 +44,13 @@
   --text-2:      #4A4A4A;
   --text-3:      #8A8A8A;
 
-  --success:     #16A34A;
+  --accent-orange:       #FF6A1A;
+  --accent-orange-hover: #F45C10;
+  --accent-orange-soft:  rgba(255, 106, 26, 0.10);
+
+  --success:     var(--accent-orange-hover);
+  --success-soft:rgba(244, 92, 16, 0.12);
+  --success-bg:  rgba(244, 92, 16, 0.08);
   --error:       #DC2626;
   --error-bg:    rgba(220, 38, 38, 0.06);
   --error-border:rgba(220, 38, 38, 0.25);
@@ -159,7 +171,7 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--success);
-  background: rgba(34, 197, 94, 0.12);
+  background: var(--success-soft);
   padding: 2px 6px;
   border-radius: 4px;
   flex-shrink: 0;

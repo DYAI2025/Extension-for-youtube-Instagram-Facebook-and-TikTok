@@ -5,7 +5,7 @@ import { extractWithAI, extractWithAIStream, type ExtractOutput } from '../servi
 import { fetchYouTubeTranscript, joinCaptionChunks, downloadAudioFromPageUrl } from '../services/transcription.js'
 import { validateResources } from '../services/urlValidator.js'
 import { extractYouTubeId } from '../utils/youtube.js'
-import type { ExtractRequest } from '../../../shared/types.js'
+import type { AttachedLink, ExtractionPackV2, ExtractRequest, Resource } from '../../../shared/types.js'
 
 export const extractRouter = Router()
 
@@ -20,8 +20,10 @@ const supabase = createClient(
 
 extractRouter.post('/', async (req: AuthRequest, res) => {
   const body = req.body as ExtractRequest
+  console.log('[EXTRACT-DEBUG] server/extract: POST / | platform:', body.platform, '| mode:', body.mode, '| strategy:', body.strategy, '| transcriptLen:', body.transcript?.length ?? 0, '| hasAudio:', !!body.audioData, '| url:', body.url)
 
   if (!body.url || !body.platform || !body.mode || !body.strategy) {
+    console.warn('[EXTRACT-DEBUG] server/extract: 400 — missing required fields')
     return res.status(400).json({ error: 'Missing required fields' })
   }
 
@@ -102,6 +104,7 @@ extractRouter.post('/', async (req: AuthRequest, res) => {
     title: body.metadata?.title,
     sessionContext: body.sessionContext,
     extractionScope: scope,
+    youtubeSource: body.youtubeSource,
   })
 
   res.json(await withValidatedResources(result))
@@ -116,10 +119,46 @@ async function withValidatedResources(result: ExtractOutput): Promise<ExtractOut
   if (!result.v2?.resources?.length) return result
   try {
     const validated = await validateResources(result.v2.resources)
-    return { ...result, v2: { ...result.v2, resources: validated } }
+    const propagated = propagateValidationToAttached(result.v2, validated)
+    return { ...result, v2: propagated }
   } catch (err) {
     console.warn('[extract] URL validation failed, leaving resources unchecked:', (err as Error).message)
     return result
+  }
+}
+
+/**
+ * After validation, copy each resource's validation/final_url onto every
+ * AttachedLink that references the same URL — both inside key_takeaway_links
+ * and inside sections[].related_links. Also update unassigned_resources by
+ * URL so the fallback list shows the same status.
+ */
+export function propagateValidationToAttached(v2: ExtractionPackV2, validated: Resource[]): ExtractionPackV2 {
+  const byUrl = new Map<string, Resource>()
+  for (const r of validated) byUrl.set(r.url, r)
+
+  const updateAttached = (l: AttachedLink): AttachedLink => {
+    const r = byUrl.get(l.url)
+    if (!r) return l
+    return r.validation ? { ...l, url_status: r.validation } : l
+  }
+
+  const key_takeaway_links = v2.key_takeaway_links?.map((arr) => arr.map(updateAttached))
+
+  const sections = v2.sections.map((s) =>
+    s.related_links ? { ...s, related_links: s.related_links.map(updateAttached) } : s,
+  )
+
+  const unassigned_resources = v2.unassigned_resources
+    ? v2.unassigned_resources.map((r) => byUrl.get(r.url) ?? r)
+    : v2.unassigned_resources
+
+  return {
+    ...v2,
+    resources: validated,
+    ...(key_takeaway_links ? { key_takeaway_links } : {}),
+    sections,
+    ...(unassigned_resources ? { unassigned_resources } : {}),
   }
 }
 
@@ -150,8 +189,10 @@ async function resolveYouTubeText(body: ExtractRequest): Promise<string | null> 
 
 extractRouter.post('/stream', async (req: AuthRequest, res) => {
   const body = req.body as ExtractRequest
+  console.log('[EXTRACT-DEBUG] server/extract: POST /stream | platform:', body.platform, '| mode:', body.mode, '| strategy:', body.strategy, '| transcriptLen:', body.transcript?.length ?? 0, '| hasAudio:', !!body.audioData, '| url:', body.url)
 
   if (!body.url || !body.platform || !body.mode || !body.strategy) {
+    console.warn('[EXTRACT-DEBUG] server/extract: /stream 400 — missing required fields')
     return res.status(400).json({ error: 'Missing required fields' })
   }
 
@@ -164,6 +205,7 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
   res.flushHeaders()
 
   const send = (type: string, payload: Record<string, unknown>) => {
+    console.log('[EXTRACT-DEBUG] server/extract: SSE send |', type, '|', Object.keys(payload).join(','))
     res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`)
   }
 
@@ -195,6 +237,7 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
       text = resolved
     }
 
+    console.log('[EXTRACT-DEBUG] server/extract: calling extractWithAIStream | textLen:', text.length, '| hasAudio:', !!audioData, '| scope:', scope)
     const rawResult = await extractWithAIStream(
       {
         text: text || undefined,
@@ -205,26 +248,46 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
         title: body.metadata?.title,
         sessionContext: body.sessionContext,
         extractionScope: scope,
+        youtubeSource: body.youtubeSource,
       },
       (chunk) => send('chunk', { text: chunk }),
     )
+    console.log('[EXTRACT-DEBUG] server/extract: extractWithAIStream returned | bullets:', rawResult.bullets?.length ?? 0, '| hasV2:', !!rawResult.v2, '| title:', rawResult.title?.slice(0, 60))
 
-    send('progress', { percent: 90, statusText: 'Verifying links…' })
-    const result = await withValidatedResources(rawResult)
-
+    // Send `done` IMMEDIATELY with the raw result so the side panel can render
+    // the full analysis without waiting for HEAD/GET URL liveness checks. Then
+    // run validation in parallel and emit a follow-up `validated` event so the
+    // UI can update resource statuses without blocking the first paint.
     send('done', {
       data: {
-        title: result.title,
-        summary: result.summary,
-        keywords: result.keywords,
-        key_takeaways: result.bullets,
-        important_links: result.links,
-        quick_facts: result.quick_facts,
-        v2: result.v2,
+        title: rawResult.title,
+        summary: rawResult.summary,
+        keywords: rawResult.keywords,
+        key_takeaways: rawResult.bullets,
+        important_links: rawResult.links,
+        quick_facts: rawResult.quick_facts,
+        v2: rawResult.v2,
       },
     })
 
+    if (rawResult.v2?.resources?.length) {
+      try {
+        send('progress', { percent: 95, statusText: 'Verifying links…' })
+        const validated = await validateResources(rawResult.v2.resources)
+        const propagated = propagateValidationToAttached(rawResult.v2, validated)
+        send('validated', {
+          resources: validated,
+          key_takeaway_links: propagated.key_takeaway_links ?? [],
+          sections: propagated.sections,
+          unassigned_resources: propagated.unassigned_resources ?? [],
+        })
+      } catch (err) {
+        console.warn('[extract/stream] URL validation failed:', (err as Error).message)
+      }
+    }
+
   } catch (err) {
+    console.error('[EXTRACT-DEBUG] server/extract: /stream caught error:', err instanceof Error ? err.message : err)
     send('error', { message: err instanceof Error ? err.message : 'Extraction failed' })
   }
 

@@ -16,6 +16,7 @@ export function usePlatformListener() {
 
   useEffect(() => {
     function handleMessage(message: ExtensionMessage) {
+      console.log('[EXTRACT-DEBUG] sidepanel: incoming runtime message | type:', message.type)
       switch (message.type) {
         case 'PLATFORM_DETECTED': {
           const m = message as PlatformDetectedMessage
@@ -54,9 +55,11 @@ export function usePlatformListener() {
           updateStreamingPack(message.pack)
           break
         case 'EXTRACTION_COMPLETE':
+          console.log('[EXTRACT-DEBUG] sidepanel: EXTRACTION_COMPLETE | packId:', message.pack.id, '| key_takeaways:', message.pack.key_takeaways?.length ?? 0, '| hasV2:', !!message.pack.v2)
           setLatestPack(message.pack)
           break
         case 'EXTRACTION_ERROR':
+          console.warn('[EXTRACT-DEBUG] sidepanel: EXTRACTION_ERROR | message:', message.message, '| isHint:', !!message.isHint)
           setExtractionError(message.message, message.isHint)
           break
         case 'SESSION_UPDATE':

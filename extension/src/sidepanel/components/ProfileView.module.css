@@ -61,7 +61,7 @@
 }
 
 .planPro {
-  background: rgba(34, 197, 94, 0.14);
+  background: var(--success-soft);
   color: var(--success);
 }
 

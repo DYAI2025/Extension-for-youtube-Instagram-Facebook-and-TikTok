@@ -71,10 +71,22 @@ export function App() {
   }), [selectedItems])
 
   function handleManualExtract(force = false) {
+    console.log('[EXTRACT-DEBUG] sidepanel: Extract button clicked | mode:', selectedMode, '| force:', force)
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id
-      if (!tabId) return
-      chrome.runtime.sendMessage({ type: 'START_EXTRACTION', tabId, mode: selectedMode, force })
+      const tab = tabs[0]
+      console.log('[EXTRACT-DEBUG] sidepanel: active tab | id:', tab?.id, '| url:', tab?.url)
+      if (!tab?.id) {
+        console.warn('[EXTRACT-DEBUG] sidepanel: no active tab id — aborting')
+        return
+      }
+      console.log('[EXTRACT-DEBUG] sidepanel: sending START_EXTRACTION → background | tabId:', tab.id, '| mode:', selectedMode, '| force:', force)
+      chrome.runtime.sendMessage({ type: 'START_EXTRACTION', tabId: tab.id, mode: selectedMode, force }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[EXTRACT-DEBUG] sidepanel: sendMessage error:', chrome.runtime.lastError.message)
+        } else {
+          console.log('[EXTRACT-DEBUG] sidepanel: sendMessage ack | response:', response)
+        }
+      })
     })
   }
 
@@ -209,6 +221,26 @@ export function App() {
           </span>
           <div className={styles.topBarActions}>
             <ThemeToggle />
+            <button className={styles.iconBtn} onClick={() => setView('library')} title="Library">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
+            {user ? (
+              <button className={styles.iconBtn} onClick={() => setView('profile')} title={`Profile — ${user.email}`}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </button>
+            ) : (
+              <button className={styles.iconBtn} onClick={() => setView('auth')} title="Sign in">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </button>
+            )}
           </div>
         </div>
         <div className={styles.content}>

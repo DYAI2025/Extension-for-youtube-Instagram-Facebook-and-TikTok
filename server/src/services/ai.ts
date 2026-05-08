@@ -3,6 +3,8 @@ import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import {
   v2ToPackFields,
+  type AttachedLink,
+  type AttachedLinkSource,
   type ExtractionPackV2,
   type ExtractionScope,
   type OutcomeMode,
@@ -13,6 +15,7 @@ import {
   type SetupGuide,
   type SourceCoverage,
   type VideoSection,
+  type YouTubeSourceBundle,
 } from '../../../shared/types.js'
 
 type Provider = 'gemini' | 'openai' | 'anthropic'
@@ -71,7 +74,7 @@ Focus: the complete technical stack with specifics.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ExtractInput {
+export interface ExtractInput {
   text?: string
   audioData?: string
   audioMimeType?: string
@@ -81,6 +84,12 @@ interface ExtractInput {
   sessionContext?: string
   /** Drives source_coverage.extraction_scope so the UI can label Full vs. Partial. */
   extractionScope?: ExtractionScope
+  /**
+   * Optional YouTube page bundle: description text + canonical link list.
+   * When present the prompt embeds the description and tells the AI to treat
+   * those links as ground-truth resources (mentioned_in_video=true).
+   */
+  youtubeSource?: YouTubeSourceBundle
 }
 
 export interface ExtractOutput {
@@ -249,12 +258,38 @@ const V2_OUTPUT_CONTRACT = `Respond with VALID JSON ONLY. No markdown, no code f
     "Direct fact, instruction, or insight — max 2 sentences. No 'the speaker says', no hedging.",
     "..."
   ],
+  "key_takeaway_links": [
+    [
+      {
+        "title": "Display name of a link from resources[] above",
+        "url": "https://... (MUST appear in resources[].url)",
+        "description": "Short one-liner about what the link is",
+        "why_relevant_here": "1 sentence: why THIS link belongs to THIS specific takeaway",
+        "user_action": "1 imperative sentence: what the user should do with it for this takeaway",
+        "confidence": "high|medium|low"
+      }
+    ],
+    []
+  ],
   "sections": [
     {
       "title": "Short topical heading (3–6 words) — like a chapter title",
-      "summary": "1–2 sentences explaining what this section covers",
-      "key_points": ["Bullet 1", "Bullet 2"],
-      "timestamp_seconds": 120
+      "summary": "1–2 sentences explaining what THIS section covers (mini-summary of the topic block)",
+      "key_points": ["Bullet 1 — direct fact/insight from this part of the video", "Bullet 2"],
+      "semantic_keywords": ["keyword-1", "keyword-2", "keyword-3"],
+      "timestamp_seconds": 120,
+      "related_links": [
+        {
+          "title": "Display name of a link from resources[]",
+          "url": "https://...",
+          "description": "Short one-liner",
+          "why_relevant_here": "1 sentence: why this link belongs to THIS section/topic block",
+          "user_action": "1 imperative sentence",
+          "confidence": "high|medium|low",
+          "timestamp": "00:18 (OPTIONAL — copy from the YouTube description if this link came from a timestamp line)",
+          "source": "youtube_description | youtube_description_timestamp | transcript_inferred (OPTIONAL — provenance of this link)"
+        }
+      ]
     }
   ],
   "resources": [
@@ -266,6 +301,17 @@ const V2_OUTPUT_CONTRACT = `Respond with VALID JSON ONLY. No markdown, no code f
       "mentioned_context": "Direct quote or close paraphrase from the transcript where the creator names this resource. REQUIRED if mentioned_in_video=true. OMIT if mentioned_in_video=false.",
       "why_relevant": "1 sentence: why this matters for the user / what problem it solves in the context of the video",
       "user_action": "1 imperative sentence: what the user should do with it (e.g. 'Install via npm install x', 'Read chapter 3', 'Sign up for the free tier and follow the quickstart')",
+      "confidence": "high|medium|low"
+    }
+  ],
+  "unassigned_resources": [
+    {
+      "title": "Same shape as resources[] entries",
+      "url": "https://...",
+      "type": "tool|...",
+      "mentioned_in_video": true,
+      "why_relevant": "...",
+      "user_action": "...",
       "confidence": "high|medium|low"
     }
   ],
@@ -299,7 +345,32 @@ CRITICAL RULES:
 4. source_coverage: be honest. If transcript was missing or partial, set transcript_available=false and confidence='low' with a clear limitation message.
 5. URLs: use canonical domains (e.g. https://nextjs.org, not vercel.com/next). For repos prefer https://github.com/owner/repo.
 6. Language: respond in the same language as the source content.
-7. NO MARKDOWN. NO CODE FENCES. RAW JSON ONLY.`
+7. NO MARKDOWN. NO CODE FENCES. RAW JSON ONLY.
+
+LINK ASSIGNMENT RULES (very important):
+A. Every entry in resources[] is the CANONICAL list of links surfaced by the video. Do not invent URLs that are not in resources[].
+B. key_takeaway_links is an array PARALLEL to key_takeaways. key_takeaway_links[i] holds the links you confidently assign to key_takeaways[i]. Use [] (empty array) when nothing matches.
+C. For each link in key_takeaway_links[i] and section.related_links: url MUST also exist in resources[]. why_relevant_here MUST explain — in one specific sentence — why this link belongs to THAT exact bullet/section, not just to the video at large.
+D. Only assign a link when the connection is concrete (the bullet describes the link, recommends installing/using it, or directly cites it). Do not stretch. A link can appear under multiple takeaways/sections only when it is genuinely relevant to each.
+E. unassigned_resources: copy any resources[] entries that you could NOT confidently match to a takeaway or a section. If every resource was assigned, set unassigned_resources to []. Do NOT duplicate the entire resources[] list here — it is the leftover bucket only.
+F. Prefer attaching to a topic-block (section) over a flat key_takeaway when the link clearly belongs to one chapter of the video. The user reads topic blocks as the primary structure.
+
+FULL-COVERAGE RULES (non-negotiable for long videos):
+G. The user has NOT watched the video and is relying entirely on this analysis. Coverage MUST span the ENTIRE transcript — beginning, middle, and end. Do not over-weight the introduction.
+H. sections[] is the primary output structure. Each section is a topic block: a coherent chunk of the video covering one theme. Build sections[] by reading the WHOLE transcript first, then segmenting it by topic shifts.
+I. For transcripts longer than ~3000 characters, produce AT LEAST 4 sections. For transcripts longer than ~10000 characters, produce 6–10 sections. Sections must be roughly evenly distributed across the timeline — if you can attach timestamp_seconds, the timestamps must increase monotonically and span from near-start to near-end.
+J. Each section MUST include: title (3–6 words), summary (1–2 sentences mini-summary of the topic), key_points (2–5 direct facts/insights from THAT chunk of the video), semantic_keywords (3–8 short tags that capture the topic).
+K. semantic_keywords must be REAL terms from or strongly implied by the transcript content of that section — not generic words like "video" or "knowledge". Validate that each keyword genuinely represents the section topic.
+L. key_takeaways (the flat top-level array) MUST be drawn from across the full timeline — NOT only from the opening minutes. Aim for one takeaway per major section if possible.
+M. If two sections describe the same topic, MERGE them. Avoid redundant blocks.
+N. If — and only if — the transcript is genuinely too short to produce 4 sections, produce as many as the content supports and set source_coverage.confidence='medium' with a limitation noting the short input.
+
+YOUTUBE DESCRIPTION LINK RULES (apply when a "CANONICAL LINKS" block is provided in the user prompt):
+O. Every URL in the CANONICAL LINKS block MUST appear in resources[] verbatim — no rewriting, no dropping. These are ground-truth links the creator put in the description and the user EXPECTS them all.
+P. For each canonical link, set mentioned_in_video=true. Use the description chapter label (when present) or the link's surrounding context as mentioned_context. If the transcript also names the resource, prefer a transcript quote.
+Q. Use the timestamp from CANONICAL LINKS / TIMESTAMPED CHAPTERS to assign each link to the matching section: choose the section whose time range covers that timestamp, or whose topic matches the chapter label. Do NOT dump them into unassigned_resources unless you genuinely cannot tell where they belong.
+R. When an attached link comes from the description, copy the original timestamp string into related_links[].timestamp (e.g. "00:18", "1:23:45"). When the link came from the spoken transcript, omit the timestamp.
+S. unassigned_resources is now a LAST-RESORT bucket: it should only hold canonical description links you truly could not match to any topic block. Aim to assign every canonical link to a section.`
 
 function buildAudioPrompt(input: ExtractInput): string {
   const { platform, title, mode, sessionContext } = input
@@ -366,11 +437,35 @@ ${V2_OUTPUT_CONTRACT}`
 }
 
 function buildUserPrompt(input: ExtractInput): string {
+  const yt = input.youtubeSource
+  const descBlock =
+    yt && yt.descriptionAvailable && yt.descriptionText
+      ? `\n\nVideo description (verbatim — read carefully, this contains canonical links the creator wants viewers to use):\n"""\n${yt.descriptionText}\n"""\n`
+      : ''
+
+  const canonicalLinks =
+    yt && yt.descriptionLinks.length > 0
+      ? `\n\nCANONICAL LINKS extracted from the YouTube description (these MUST appear in resources[] verbatim — do not invent variants, do not drop them):\n${yt.descriptionLinks
+          .map((l, i) => {
+            const ts = l.timestamp ? ` [@${l.timestamp}]` : ''
+            const t = l.title ? ` — ${l.title}` : ''
+            return `${i + 1}. ${l.url}${ts}${t}`
+          })
+          .join('\n')}\n`
+      : ''
+
+  const timestamped =
+    yt && yt.timestampedResources.length > 0
+      ? `\n\nTIMESTAMPED CHAPTERS / RESOURCES (use these to anchor section timestamps and to assign links to the right topic block):\n${yt.timestampedResources
+          .map((r) => `- ${r.timestamp} — ${r.label}${r.url ? ` (${r.url})` : ''}`)
+          .join('\n')}\n`
+      : ''
+
   return `Source: ${input.platform}${input.title ? ` — "${input.title}"` : ''}
 
 Transcript:
-${input.text}
-
+${input.text ?? ''}
+${descBlock}${canonicalLinks}${timestamped}
 Respond with raw JSON only — no markdown, no code fences.`
 }
 
@@ -392,7 +487,8 @@ function finalizeOutput(raw: string, input: ExtractInput): ExtractOutput {
 
 // ─── V2 parsing ───────────────────────────────────────────────────────────────
 
-function parseV2(text: string, input: ExtractInput): ExtractionPackV2 {
+// Exported for unit tests — production callers should use extractWithAI/Stream.
+export function parseV2(text: string, input: ExtractInput): ExtractionPackV2 {
   const cleaned = text.replace(/^```(?:json)?\s*/im, '').replace(/\s*```\s*$/im, '').trim()
 
   let json: Record<string, unknown> = {}
@@ -403,30 +499,206 @@ function parseV2(text: string, input: ExtractInput): ExtractionPackV2 {
     return legacyTextToV2(text, input)
   }
 
+  let resources = parseResources(json.resources ?? json.links, input.text)
+  // Back-fill: every URL that came from the YouTube description must show up
+  // in resources[]. If the AI dropped one, add it ourselves so the user still
+  // sees every link the creator put in the description.
+  resources = mergeDescriptionLinksIntoResources(resources, input.youtubeSource)
+  const validUrls = new Set(resources.map((r) => r.url))
+  const key_takeaways = arrStr(json.key_takeaways ?? json.bullets, 5)
+  const key_takeaway_links = parseTakeawayLinks(json.key_takeaway_links, key_takeaways.length, validUrls)
+  const sections = parseSections(json.sections, validUrls)
+  // Back-fill timestamp/source onto attached links by URL — the AI sometimes
+  // drops these even though we instruct it to keep them.
+  annotateAttachedFromBundle(sections, key_takeaway_links, input.youtubeSource)
+
+  // Collect every URL the AI attached to a takeaway or section.
+  const assignedUrls = new Set<string>()
+  for (const links of key_takeaway_links) {
+    for (const l of links) assignedUrls.add(l.url)
+  }
+  for (const s of sections) {
+    for (const l of s.related_links ?? []) assignedUrls.add(l.url)
+  }
+
+  // Honour the AI's own unassigned_resources when given. Otherwise derive the
+  // leftovers ourselves so the UI's "Other resources" fallback always matches
+  // what the bullets ended up surfacing.
+  const aiUnassigned = parseUnassignedResources(json.unassigned_resources, resources)
+  const unassigned_resources = aiUnassigned.length > 0
+    ? aiUnassigned
+    : resources.filter((r) => !assignedUrls.has(r.url))
+
   return {
     title: str(json.title) || input.title || '',
     summary: str(json.summary),
     video_explanation: str(json.video_explanation),
-    key_takeaways: arrStr(json.key_takeaways ?? json.bullets, 5),
-    sections: parseSections(json.sections),
-    resources: parseResources(json.resources ?? json.links, input.text),
+    key_takeaways,
+    key_takeaway_links,
+    sections,
+    resources,
     setup_guide: parseSetupGuide(json.setup_guide),
     warnings: arrStr(json.warnings, 3),
     source_coverage: parseSourceCoverage(json.source_coverage, input),
+    unassigned_resources,
   }
 }
 
-function parseSections(raw: unknown): VideoSection[] {
+/**
+ * Adds description-only URLs that the AI dropped from resources[]. Each new
+ * resource is marked as mentioned_in_video=true (the creator put it in their
+ * description) with mentioned_context taken from the description label or
+ * timestamp.
+ */
+function mergeDescriptionLinksIntoResources(
+  resources: Resource[],
+  yt?: YouTubeSourceBundle,
+): Resource[] {
+  if (!yt || !yt.descriptionLinks?.length) return resources
+  const known = new Set(resources.map((r) => r.url))
+  const added: Resource[] = []
+  for (const link of yt.descriptionLinks) {
+    if (known.has(link.url)) continue
+    known.add(link.url)
+    const ctx = link.timestamp
+      ? `From video description (${link.timestamp})${link.title ? `: ${link.title}` : ''}`
+      : `From video description${link.title ? `: ${link.title}` : ''}`
+    added.push({
+      title: link.title || hostnameOf(link.url) || link.url,
+      url: link.url,
+      type: 'other',
+      mentioned_in_video: true,
+      mentioned_context: ctx,
+      why_relevant: 'Listed by the creator in the YouTube description.',
+      user_action: 'Open the link to use this resource.',
+      confidence: 'high',
+    })
+  }
+  return [...resources, ...added]
+}
+
+function hostnameOf(url: string): string | null {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return null }
+}
+
+/**
+ * After the AI returns, propagate timestamp/source metadata from the bundle
+ * onto any AttachedLink whose URL came from the YouTube description. This is
+ * defensive: the model is told to copy these fields but does not always.
+ */
+function annotateAttachedFromBundle(
+  sections: VideoSection[],
+  key_takeaway_links: AttachedLink[][],
+  yt?: YouTubeSourceBundle,
+): void {
+  if (!yt || !yt.descriptionLinks?.length) return
+  const meta = new Map<string, { timestamp?: string; source: AttachedLinkSource }>()
+  for (const l of yt.descriptionLinks) {
+    meta.set(l.url, {
+      ...(l.timestamp ? { timestamp: l.timestamp } : {}),
+      source: l.timestamp ? 'youtube_description_timestamp' : 'youtube_description',
+    })
+  }
+  const apply = (link: AttachedLink): void => {
+    const m = meta.get(link.url)
+    if (!m) return
+    if (m.timestamp && !link.timestamp) link.timestamp = m.timestamp
+    if (!link.source) link.source = m.source
+  }
+  for (const s of sections) for (const l of s.related_links ?? []) apply(l)
+  for (const arr of key_takeaway_links) for (const l of arr) apply(l)
+}
+
+function parseSections(raw: unknown, validUrls?: Set<string>): VideoSection[] {
   if (!Array.isArray(raw)) return []
   return raw
     .filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null)
-    .map((s) => ({
-      title: str(s.title),
-      summary: str(s.summary),
-      key_points: arrStr(s.key_points, 0),
-      ...(typeof s.timestamp_seconds === 'number' ? { timestamp_seconds: s.timestamp_seconds } : {}),
-    }))
+    .map((s) => {
+      const related = parseAttachedLinks(s.related_links, validUrls)
+      const semantic_keywords = arrStr(s.semantic_keywords ?? s.keywords, 0)
+        .map((kw) => kw.replace(/^#/, '').trim())
+        .filter((kw) => kw.length > 0 && kw.length < 40)
+        .slice(0, 8)
+      return {
+        title: str(s.title),
+        summary: str(s.summary),
+        key_points: arrStr(s.key_points, 0),
+        ...(semantic_keywords.length > 0 ? { semantic_keywords } : {}),
+        ...(typeof s.timestamp_seconds === 'number' ? { timestamp_seconds: s.timestamp_seconds } : {}),
+        ...(related.length > 0 ? { related_links: related } : {}),
+      }
+    })
     .filter((s) => s.title.length > 0)
+}
+
+/**
+ * Parse a single AttachedLink object. Drops anything whose url is missing or
+ * does not match a real entry in resources[] (when validUrls is provided).
+ */
+function parseAttachedLink(raw: unknown, validUrls?: Set<string>): AttachedLink | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const url = str(r.url ?? r.href)
+  if (!isAcceptableUrl(url)) return null
+  if (validUrls && !validUrls.has(url)) return null
+
+  const title = str(r.title ?? r.name)
+  if (!title) return null
+
+  const why = str(r.why_relevant_here ?? r.whyRelevantHere ?? r.why_relevant)
+  const userAction = str(r.user_action ?? r.userAction)
+  const description = str(r.description)
+
+  const link: AttachedLink = {
+    title,
+    url,
+    why_relevant_here: why || 'Mentioned in this part of the video.',
+    confidence: parseConfidence(r.confidence),
+  }
+  if (description) link.description = description
+  if (userAction) link.user_action = userAction
+  const timestamp = str(r.timestamp)
+  if (timestamp && /^\d{1,2}(:\d{2}){1,2}$/.test(timestamp)) link.timestamp = timestamp
+  const source = str(r.source) as AttachedLinkSource
+  const allowedSources: AttachedLinkSource[] = [
+    'youtube_description',
+    'youtube_description_timestamp',
+    'transcript_inferred',
+    'manual',
+  ]
+  if (source && allowedSources.includes(source)) link.source = source
+  return link
+}
+
+function parseAttachedLinks(raw: unknown, validUrls?: Set<string>): AttachedLink[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item) => parseAttachedLink(item, validUrls))
+    .filter((l): l is AttachedLink => l !== null)
+}
+
+/**
+ * Parse the parallel takeaway_links array. Always returns an array of length
+ * `takeawayCount` so UI can index into it directly.
+ */
+function parseTakeawayLinks(raw: unknown, takeawayCount: number, validUrls: Set<string>): AttachedLink[][] {
+  const out: AttachedLink[][] = Array.from({ length: takeawayCount }, () => [])
+  if (!Array.isArray(raw)) return out
+  for (let i = 0; i < takeawayCount; i++) {
+    out[i] = parseAttachedLinks(raw[i], validUrls)
+  }
+  return out
+}
+
+/**
+ * If the AI provided unassigned_resources, sanitize it through parseResources
+ * (drops bad URLs, normalizes mentioned_in_video). Defaults to [] when missing
+ * — the route layer can still derive its own fallback if needed.
+ */
+function parseUnassignedResources(raw: unknown, allResources: Resource[]): Resource[] {
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  const allowedUrls = new Set(allResources.map((r) => r.url))
+  return parseResources(raw).filter((r) => allowedUrls.has(r.url))
 }
 
 function parseResources(raw: unknown, transcript?: string): Resource[] {
@@ -544,6 +816,7 @@ function parseSourceCoverage(raw: unknown, input: ExtractInput): SourceCoverage 
     extraction_scope: resolveScope(input),
     confidence: parseConfidence(r.confidence),
     ...(Array.isArray(r.limitations) ? { limitations: arrStr(r.limitations, 0) } : {}),
+    ...descriptionCoverage(input),
   }
 }
 
@@ -553,6 +826,17 @@ function defaultSourceCoverage(input: ExtractInput): SourceCoverage {
     extraction_source: input.audioData ? 'audio' : input.text ? 'transcript' : 'mixed',
     extraction_scope: resolveScope(input),
     confidence: 'medium',
+    ...descriptionCoverage(input),
+  }
+}
+
+function descriptionCoverage(input: ExtractInput): Partial<SourceCoverage> {
+  const yt = input.youtubeSource
+  if (!yt) return {}
+  return {
+    description_available: yt.descriptionAvailable,
+    description_link_count: yt.descriptionLinks?.length ?? 0,
+    timestamped_resource_count: yt.timestampedResources?.length ?? 0,
   }
 }
 

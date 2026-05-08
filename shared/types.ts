@@ -197,6 +197,44 @@ export interface SourceCoverage {
   extraction_scope: ExtractionScope
   confidence: ConfidenceLevel
   limitations?: string[]
+  /** True when the YouTube description was successfully read into the prompt. */
+  description_available?: boolean
+  /** Number of distinct URLs extracted from the description. */
+  description_link_count?: number
+  /** Number of timestamped resources parsed from the description. */
+  timestamped_resource_count?: number
+}
+
+/**
+ * Where a link was originally surfaced.
+ * - 'youtube_description':           found in the raw description text
+ * - 'youtube_description_timestamp': listed in a timestamp line (e.g. "00:18 - Tool ...")
+ * - 'transcript_inferred':           AI inferred from spoken content
+ * - 'manual':                        rare — manually added by the user
+ */
+export type AttachedLinkSource =
+  | 'youtube_description'
+  | 'youtube_description_timestamp'
+  | 'transcript_inferred'
+  | 'manual'
+
+/**
+ * A link attached directly to a specific takeaway or section.
+ * The AI is asked to surface only links it can confidently match to that point.
+ * Use `unassigned_resources` (on ExtractionPackV2) for everything else.
+ */
+export interface AttachedLink {
+  title: string
+  url: string
+  description?: string
+  why_relevant_here: string         // 1 sentence: why this link belongs to THIS bullet/section
+  user_action?: string              // 1 sentence: what to do with it
+  confidence: ConfidenceLevel
+  url_status?: UrlValidation        // mirrored from server-side validation by URL
+  /** Timestamp string from the YouTube description (e.g. "00:18", "1:23:45") when source is timestamped. */
+  timestamp?: string
+  /** Where the link was originally surfaced (description vs. transcript). */
+  source?: AttachedLinkSource
 }
 
 /** Topical section of the video — like chapter markers but AI-derived. */
@@ -204,7 +242,10 @@ export interface VideoSection {
   title: string
   summary: string             // 1-2 sentences explaining what this section covers
   key_points: string[]
+  /** Short semantic keywords/tags that represent the topic — drives chip rendering. */
+  semantic_keywords?: string[]
   timestamp_seconds?: number  // optional anchor when AI can locate it
+  related_links?: AttachedLink[]    // links the AI assigned to this whole section
 }
 
 export interface ExtractionPackV2 {
@@ -212,11 +253,21 @@ export interface ExtractionPackV2 {
   summary: string             // short 1-line topic statement
   video_explanation: string   // longer prose: what this video is, what it teaches
   key_takeaways: string[]
+  /**
+   * Parallel to `key_takeaways`. Index N holds the links attached to takeaway N.
+   * An entry may be empty/missing when no link was confidently matched.
+   */
+  key_takeaway_links?: AttachedLink[][]
   sections: VideoSection[]
   resources: Resource[]
   setup_guide: SetupGuide
   warnings: string[]          // creator caveats / outdated info / things to watch out for
   source_coverage: SourceCoverage
+  /**
+   * Resources that could not be confidently attached to any takeaway/section.
+   * Rendered by the UI as a small "Other resources" fallback only when present.
+   */
+  unassigned_resources?: Resource[]
 }
 
 /** Bridge V2 → legacy Pack so existing UI keeps rendering until full migration. */
@@ -279,6 +330,50 @@ export interface VideoSession {
   platform: Platform
   title: string
   segments: SessionSegment[]
+}
+
+// ─── YouTube source bundle (description + timestamped links) ─────────────────
+
+/** A single link extracted from the YouTube description. */
+export interface DescriptionLink {
+  url: string
+  /** Anchor text or surrounding label, when one is available. */
+  title?: string
+  /** "00:18", "1:23:45" — present only when this URL appeared on a timestamp line. */
+  timestamp?: string
+}
+
+/**
+ * A timestamped item parsed from a YouTube description chapter list /
+ * "00:18 - ToolName https://example.com" pattern. Distinct from DescriptionLink:
+ * may exist without a URL (e.g. plain chapter markers).
+ */
+export interface TimestampedResource {
+  timestamp: string
+  /** Seconds offset, when parseable. */
+  timestamp_seconds?: number
+  label: string
+  url?: string
+}
+
+/**
+ * Everything the extension extracted directly from the YouTube page —
+ * transcript + description + parsed links. Sent to the server alongside the
+ * transcript so the AI can use description links as canonical resources.
+ */
+export interface YouTubeSourceBundle {
+  videoId: string
+  videoUrl: string
+  title: string
+  channelName?: string
+  transcriptText: string
+  transcriptAvailable: boolean
+  descriptionText: string
+  descriptionAvailable: boolean
+  descriptionLinks: DescriptionLink[]
+  timestampedResources: TimestampedResource[]
+  /** Free-form list of where data came from for telemetry / UI badges. */
+  extractionSourceCoverage: ExtractionSourceType[]
 }
 
 // ─── Signal (YouTube) ────────────────────────────────────────────────────────
@@ -410,6 +505,8 @@ export interface ExtractRequest {
   metadata?: { title: string; description: string }
   captionChunks?: string[]
   sessionContext?: string  // summary so far (for continuity across pauses)
+  /** Full YouTube source bundle (description text + extracted links). Only set for YouTube. */
+  youtubeSource?: YouTubeSourceBundle
 }
 
 export interface ExtractResponse {
