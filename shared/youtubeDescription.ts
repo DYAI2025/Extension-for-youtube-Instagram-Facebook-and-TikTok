@@ -20,6 +20,61 @@ function normalizeUrl(raw: string): string {
   return trimTrailingPunctuation(raw.trim())
 }
 
+/**
+ * Decode the `q` parameter from a `youtube.com/redirect?q=…` URL. YouTube
+ * wraps every external link in a redirect that hides the real destination
+ * behind URL-encoded text — feeding that wrapped URL directly to the user
+ * (or to an LLM as "the canonical resource") produces broken/404 links.
+ *
+ * Returns the original input unchanged if it isn't a YouTube redirect.
+ */
+export function decodeYouTubeRedirect(url: string): string {
+  if (!url) return url
+  let parsed: URL
+  try {
+    parsed = new URL(url, 'https://www.youtube.com')
+  } catch {
+    return url
+  }
+  const host = parsed.hostname.replace(/^www\./, '')
+  if (host !== 'youtube.com' && host !== 'm.youtube.com') return url
+  if (parsed.pathname !== '/redirect') return url
+  const target = parsed.searchParams.get('q')
+  if (!target) return url
+  try {
+    return decodeURIComponent(target)
+  } catch {
+    return target
+  }
+}
+
+/**
+ * Resolve a list of raw description anchor `href` values into clean absolute
+ * URLs: relative anchors become absolute against the YouTube origin and
+ * `/redirect?q=…` wrappers are unwrapped. Drops in-page (`#`) and
+ * `javascript:` anchors. Deduplicates while preserving first-seen order.
+ */
+export function resolveAnchorHrefs(hrefs: string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of hrefs) {
+    if (!raw) continue
+    if (raw.startsWith('#') || raw.startsWith('javascript:')) continue
+    let absolute: string
+    try {
+      absolute = new URL(raw, 'https://www.youtube.com').toString()
+    } catch {
+      continue
+    }
+    const decoded = decodeYouTubeRedirect(absolute)
+    const normalized = normalizeUrl(decoded)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
 export function timestampToSeconds(ts: string): number | undefined {
   const parts = ts.split(':').map((p) => Number.parseInt(p, 10))
   if (parts.some((n) => Number.isNaN(n))) return undefined

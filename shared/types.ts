@@ -70,9 +70,13 @@ export interface User {
  * Full user profile from the `profiles` table.
  * Distinct from `User` (which is just the auth identity).
  */
+/**
+ * Mirrors `public.profiles`. The deployed schema does NOT include `email` —
+ * email is read from `auth.users` via the active Supabase session. Don't add
+ * it back here; queries that select it will fail with column-not-found.
+ */
 export interface UserProfile {
   id: string
-  email: string
   display_name: string | null
   preferred_language: string          // ISO 639-1 e.g. 'en', 'de'
   default_mode: OutcomeMode
@@ -93,6 +97,39 @@ export interface QuickFacts {
   platform: string
   category: string
   content_type: string
+}
+
+/**
+ * A single user-selected artefact persisted to the `saved_items` table.
+ * `item_type` mirrors the Supabase check constraint (migration 005).
+ * `payload` carries the verbatim artefact JSON as built by ResultCard's
+ * payload helpers.
+ */
+export type SavedItemType =
+  | 'takeaway'
+  | 'section'
+  | 'resource'
+  | 'setup_step'
+  | 'command'
+  | 'full_analysis'
+
+export interface SavedItem {
+  id: string
+  userId: string
+  packId: string | null
+  itemType: SavedItemType
+  payload: {
+    title: string
+    content?: string
+    resource_url?: string
+    context?: string
+    metadata?: Record<string, unknown>
+    raw: unknown
+  }
+  videoUrl: string | null
+  videoTitle: string | null
+  mode: OutcomeMode | null
+  createdAt: string
 }
 
 export interface Pack {
@@ -136,8 +173,16 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low'
  * - 'redirected':  3xx → final URL stored in `final_url`; user can still click
  * - 'invalid':     4xx/5xx, network error, DNS failure → UI must mark clearly
  * - 'unchecked':   not yet validated (e.g. validation skipped or failed timeout)
+ * - 'unverified':  AI inferred a candidate URL that could not be confirmed
+ *                  against the transcript or description; UI must surface a
+ *                  "best guess" badge instead of showing it as a real link.
  */
-export type UrlValidation = 'valid' | 'invalid' | 'redirected' | 'unchecked'
+export type UrlValidation =
+  | 'valid'
+  | 'invalid'
+  | 'redirected'
+  | 'unchecked'
+  | 'unverified'
 
 /**
  * A link/tool/repo/product the AI surfaced for the user.
@@ -372,6 +417,14 @@ export interface YouTubeSourceBundle {
   descriptionAvailable: boolean
   descriptionLinks: DescriptionLink[]
   timestampedResources: TimestampedResource[]
+  /**
+   * Exact URLs harvested from `<a href>` anchors in the description DOM,
+   * with `youtube.com/redirect?q=…` wrappers already decoded. Highest-priority
+   * source for resource validation: the visible text on YouTube is often
+   * truncated ("github.com/owner/r…"), but the anchor href is the real
+   * destination.
+   */
+  descriptionAnchorUrls: string[]
   /** Free-form list of where data came from for telemetry / UI badges. */
   extractionSourceCoverage: ExtractionSourceType[]
 }

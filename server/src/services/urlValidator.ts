@@ -8,6 +8,10 @@
  *   'invalid'    — terminal 4xx/5xx, DNS error, or refused connection
  *   'unchecked'  — timeout / network abort (we don't want to mark a maybe-live
  *                  resource as broken because the validator was too aggressive)
+ *   'unverified' — repo-shaped GitHub URL that looks plausible but the
+ *                  upstream API didn't confirm it (rate-limited, no token).
+ *                  UI must render this with a visible "unverified" badge so
+ *                  the user knows to double-check before trusting it.
  *
  * The check is best-effort: we cap concurrency and per-request timeout so it
  * never blocks an extraction by more than a few seconds total.
@@ -33,7 +37,8 @@ export async function validateResources(resources: Resource[]): Promise<Resource
       const r = queue.shift()
       if (!r) return
       const idx = indexMap.get(r)!
-      out[idx] = await validateOne(r)
+      const generic = await validateOne(r)
+      out[idx] = await applyGitHubValidation(generic)
     }
   }
 
@@ -94,6 +99,88 @@ type FetchResult =
   | { kind: 'invalid' }
   | { kind: 'timeout' }
   | { kind: 'method-not-allowed' }
+
+/**
+ * Cross-check GitHub repo URLs against the GitHub REST API. The HEAD/GET
+ * liveness check is unreliable for github.com because GitHub returns 200 for
+ * many invalid paths (it serves a "page not found" HTML body with HTTP 200
+ * to logged-in browsers). Hitting `api.github.com/repos/{owner}/{repo}`
+ * gives a clean 200/404 signal, so we use it as the source of truth for
+ * GitHub repo links specifically.
+ *
+ * Behaviour:
+ *  - 200 → keep `valid` / `redirected`
+ *  - 404 → mark `invalid` (the URL leads to a real 404 page)
+ *  - rate-limited (403/429) → mark `unverified` so the UI can warn the user
+ *  - non-repo paths (gist, sponsors, etc.) → leave generic validation in place
+ */
+async function applyGitHubValidation(r: Resource): Promise<Resource> {
+  const repo = parseGitHubRepoPath(r.url)
+  if (!repo) return r
+
+  const headers: Record<string, string> = {
+    'User-Agent': USER_AGENT,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  }
+  const token = process.env.GITHUB_TOKEN
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  try {
+    const apiUrl = `https://api.github.com/repos/${repo.owner}/${repo.repo}`
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(apiUrl, { method: 'GET', headers, signal: ctrl.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (res.status === 200) {
+      // Trust the API: keep current validation (valid/redirected) — the URL is real.
+      if (r.validation === 'invalid' || r.validation === 'unchecked') {
+        return { ...r, validation: 'valid' }
+      }
+      return r
+    }
+    if (res.status === 404) {
+      return { ...r, validation: 'invalid' }
+    }
+    if (res.status === 403 || res.status === 429) {
+      // Rate-limited — we can't confirm. Surface to the user.
+      return { ...r, validation: 'unverified' }
+    }
+    return r
+  } catch {
+    // Network issue → don't override; let generic validation stand.
+    return r
+  }
+}
+
+function parseGitHubRepoPath(url: string): { owner: string; repo: string } | null {
+  if (!url) return null
+  let u: URL
+  try { u = new URL(url) } catch { return null }
+  const host = u.hostname.replace(/^www\./, '').toLowerCase()
+  if (host !== 'github.com') return null
+  const segs = u.pathname.split('/').filter(Boolean)
+  if (segs.length < 2) return null
+  // Skip GitHub features that aren't user/repo: gist, sponsors, marketplace, topics, search, settings, orgs, etc.
+  const reserved = new Set([
+    'gist', 'sponsors', 'marketplace', 'topics', 'search', 'settings',
+    'orgs', 'organizations', 'pricing', 'pulls', 'issues', 'notifications',
+    'login', 'signup', 'about', 'security', 'features',
+  ])
+  if (reserved.has(segs[0].toLowerCase())) return null
+  const owner = segs[0]
+  const repo = segs[1].replace(/\.git$/, '')
+  if (!owner || !repo) return null
+  // GitHub doesn't allow dots/whitespace in usernames or trailing dashes; skip
+  // anything that obviously isn't a real repo path.
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(owner)) return null
+  if (!/^[A-Za-z0-9._-]+$/.test(repo)) return null
+  return { owner, repo }
+}
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<FetchResult> {
   const controller = new AbortController()

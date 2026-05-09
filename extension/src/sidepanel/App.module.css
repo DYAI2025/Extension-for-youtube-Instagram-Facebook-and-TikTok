@@ -304,6 +304,40 @@
 
 .retryBtn:hover { color: var(--text-2); }
 
+/* ─── Save status banner (success/error toast) ──────────────────────────── */
+.saveBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--success-bg, rgba(40,160,90,0.12));
+  border: 1px solid var(--success-border, rgba(40,160,90,0.4));
+  color: var(--success, #2ea567);
+  padding: 8px 10px 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-top: -4px;
+}
+.saveBanner > span {
+  flex: 1;
+}
+.saveBannerErr {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error);
+}
+.saveBannerClose {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  opacity: 0.65;
+}
+.saveBannerClose:hover { opacity: 1; }
+
 
 /* ─── Live extraction card (skeleton) ───────────────────────────────────── */
 .liveCard {

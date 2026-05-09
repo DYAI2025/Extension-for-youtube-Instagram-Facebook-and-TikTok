@@ -15,7 +15,7 @@ import type {
   YouTubeSourceBundle,
 } from '@shared/types'
 import { detectMode } from '@shared/types'
-import { parseDescriptionLinks, parseTimestampedResources } from '@shared/youtubeDescription'
+import { parseDescriptionLinks, parseTimestampedResources, resolveAnchorHrefs } from '@shared/youtubeDescription'
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000'
 
 // Diagnostic: print the API base on every service-worker boot so the user can
@@ -521,9 +521,22 @@ async function fetchTranscriptFromHTML(videoId: string, tabId: number): Promise<
 // Reads videoDetails.{shortDescription,title,author,videoId} from
 // ytInitialPlayerResponse in the YouTube tab's MAIN world. The service-worker
 // can't access this directly because the variable lives on the tab's window.
+//
+// Also collects anchor `href` values from the description DOM expander. Anchor
+// hrefs are the *exact* URLs YouTube renders (typically wrapped in a
+// `youtube.com/redirect?q=…` URL). The visible text is often a truncated
+// "github.com/owner/r…" — using that as the URL produces 404s. We harvest the
+// raw hrefs here and decode them in the parent so transcripts/descriptions
+// can be cross-referenced against the truth.
 async function fetchYouTubePageDetails(
   tabId: number,
-): Promise<{ description: string; title: string; channelName: string; videoId: string } | null> {
+): Promise<{
+  description: string
+  title: string
+  channelName: string
+  videoId: string
+  descriptionAnchorHrefs: string[]
+} | null> {
   try {
     const result = await chrome.scripting.executeScript({
       target: { tabId },
@@ -542,15 +555,22 @@ async function fetchYouTubePageDetails(
         const vd = ipr?.videoDetails ?? {}
         // Fallback: read description from the DOM expander if the player JSON
         // doesn't expose it (rare, but happens on age-gated/embed pages).
-        const domDesc =
-          document.querySelector('#description-inline-expander')?.textContent ??
-          document.querySelector('ytd-text-inline-expander')?.textContent ??
-          ''
+        const expander =
+          document.querySelector('#description-inline-expander') ??
+          document.querySelector('ytd-text-inline-expander')
+        const domDesc = expander?.textContent ?? ''
+        const anchors = expander
+          ? Array.from(expander.querySelectorAll<HTMLAnchorElement>('a[href]'))
+          : []
+        const hrefs = anchors
+          .map((a) => a.getAttribute('href') ?? '')
+          .filter((h) => h.length > 0)
         return {
           description: (vd.shortDescription ?? '').trim() || (domDesc ?? '').trim(),
           title: vd.title ?? document.title ?? '',
           channelName: vd.author ?? '',
           videoId: vd.videoId ?? '',
+          descriptionAnchorHrefs: hrefs,
         }
       },
     })
@@ -1173,7 +1193,8 @@ async function handleStartExtraction(tabId: number, mode: OutcomeMode, force = f
     const descriptionText = pageDetails?.description ?? ''
     const descriptionLinks = parseDescriptionLinks(descriptionText)
     const timestampedResources = parseTimestampedResources(descriptionText)
-    console.log('[EXTRACT-DEBUG] bg: YouTube fetch done | transcriptLen:', transcript.length, '| descriptionLen:', descriptionText.length, '| links:', descriptionLinks.length, '| timestamped:', timestampedResources.length)
+    const descriptionAnchorUrls = resolveAnchorHrefs(pageDetails?.descriptionAnchorHrefs ?? [])
+    console.log('[EXTRACT-DEBUG] bg: YouTube fetch done | transcriptLen:', transcript.length, '| descriptionLen:', descriptionText.length, '| links:', descriptionLinks.length, '| timestamped:', timestampedResources.length, '| anchorHrefs:', descriptionAnchorUrls.length)
     console.log('[bg] YouTube transcript length:', transcript.length, '| description length:', descriptionText.length)
 
     // Re-read state — user may have navigated away during the async fetch
@@ -1195,6 +1216,7 @@ async function handleStartExtraction(tabId: number, mode: OutcomeMode, force = f
           descriptionAvailable: descriptionText.length > 0,
           descriptionLinks,
           timestampedResources,
+          descriptionAnchorUrls,
           extractionSourceCoverage: [
             ...(transcript.length > 30 ? ['transcript' as const] : []),
             ...(descriptionText.length > 0 ? ['description' as const] : []),

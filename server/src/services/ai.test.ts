@@ -147,6 +147,7 @@ const ytBundleInput = {
       { timestamp: '00:00', timestamp_seconds: 0, label: 'Intro' },
       { timestamp: '00:18', timestamp_seconds: 18, label: 'Tool D', url: 'https://example.com/d' },
     ],
+    descriptionAnchorUrls: [],
     extractionSourceCoverage: ['transcript' as const, 'description' as const],
   },
 }
@@ -166,6 +167,74 @@ test('parseV2 + youtubeSource: source_coverage carries description counters', ()
   assert.equal(v2.source_coverage.description_available, true)
   assert.equal(v2.source_coverage.description_link_count, 2)
   assert.equal(v2.source_coverage.timestamped_resource_count, 2)
+})
+
+test('parseV2 + descriptionAnchorUrls: upgrades truncated GitHub URL to full owner/repo', () => {
+  const fix = JSON.parse(fixture())
+  // Simulate the AI copying the truncated visible text from YouTube
+  fix.resources.push({
+    title: 'Codex CLI',
+    url: 'https://github.com/openai',
+    type: 'repo',
+    mentioned_in_video: true,
+    mentioned_context: 'we use codex cli',
+    why_relevant: 'Walkthrough tool',
+    user_action: 'Star and clone.',
+    confidence: 'high',
+  })
+  const ytWithAnchor = {
+    ...baseInput,
+    text: 'mock transcript covering topic A at the beginning, topic B in the middle, and topic C near the end. We use codex cli https://github.com/openai. Also https://example.com/a, https://example.com/b, https://example.com/c, https://example.com/unrelated.',
+    youtubeSource: {
+      ...ytBundleInput.youtubeSource!,
+      descriptionAnchorUrls: ['https://github.com/openai/codex'],
+    },
+  }
+  const v2 = parseV2(JSON.stringify(fix), ytWithAnchor)
+  const urls = v2.resources.map((r) => r.url)
+  assert.ok(urls.includes('https://github.com/openai/codex'), 'truncated GitHub URL should be upgraded')
+  assert.ok(!urls.includes('https://github.com/openai'), 'truncated stub should be replaced, not duplicated')
+})
+
+test('parseV2 + descriptionAnchorUrls: existing exact URL is preserved (no downgrade)', () => {
+  const fix = JSON.parse(fixture())
+  fix.resources.push({
+    title: 'Codex CLI',
+    url: 'https://github.com/openai/codex',
+    type: 'repo',
+    mentioned_in_video: true,
+    mentioned_context: 'we use codex cli',
+    why_relevant: 'CLI tool',
+    user_action: 'Star and clone.',
+    confidence: 'high',
+  })
+  const yt = {
+    ...baseInput,
+    youtubeSource: {
+      ...ytBundleInput.youtubeSource!,
+      // Anchor only knows the parent owner page — must NOT downgrade the AI's deeper URL
+      descriptionAnchorUrls: ['https://github.com/openai'],
+    },
+  }
+  const v2 = parseV2(JSON.stringify(fix), yt)
+  const urls = v2.resources.map((r) => r.url)
+  assert.ok(urls.includes('https://github.com/openai/codex'), 'exact URL must be preserved')
+})
+
+test('parseV2 + descriptionAnchorUrls: anchor-only URL is added as creator-listed resource', () => {
+  const fix = JSON.parse(fixture())
+  const ytWithAnchor = {
+    ...baseInput,
+    youtubeSource: {
+      ...ytBundleInput.youtubeSource!,
+      descriptionAnchorUrls: ['https://github.com/example/orphan'],
+    },
+  }
+  const v2 = parseV2(JSON.stringify(fix), ytWithAnchor)
+  const orphan = v2.resources.find((r) => r.url === 'https://github.com/example/orphan')
+  assert.ok(orphan, 'anchor-only URL must be folded into resources[]')
+  assert.equal(orphan?.mentioned_in_video, true)
+  assert.equal(orphan?.confidence, 'high')
 })
 
 test('parseV2 + youtubeSource: propagates timestamp + source onto attached link', () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import type { AttachedLink, Pack, Resource, VideoSection } from '@shared/types'
 import { useAppStore } from '../store'
 import styles from './ResultCard.module.css'
@@ -13,14 +13,92 @@ export type SavedItemType =
   | 'command'
   | 'full_analysis'
 
+// Normalized shape stored in saved_items.payload. Keeps the verbatim
+// `raw` artefact (lossless round-trip), plus a flat read-model used by the
+// library and PDF export so they don't need to know about every artefact
+// shape.
+export interface SavedItemPayload {
+  title: string
+  content?: string
+  resource_url?: string
+  context?: string
+  metadata?: Record<string, unknown>
+  raw: unknown
+}
+
 export interface SavedItemSelection {
   itemType: SavedItemType
-  payload: unknown
+  payload: SavedItemPayload
+}
+
+function buildResourcePayload(
+  link: AttachedLink,
+  matchedResource: Resource | undefined,
+  context: string,
+): SavedItemPayload {
+  return {
+    title: link.title || matchedResource?.title || link.url,
+    content: link.why_relevant_here || matchedResource?.why_relevant || link.description || '',
+    resource_url: link.url,
+    context,
+    metadata: {
+      source: link.source,
+      timestamp: link.timestamp,
+      confidence: link.confidence ?? matchedResource?.confidence,
+      type: matchedResource?.type,
+      user_action: link.user_action ?? matchedResource?.user_action,
+    },
+    raw: matchedResource ?? link,
+  }
+}
+
+function buildTakeawayPayload(text: string, index: number): SavedItemPayload {
+  return {
+    title: text.slice(0, 80),
+    content: text,
+    context: `Takeaway #${index + 1}`,
+    metadata: { takeaway_index: index },
+    raw: { text },
+  }
+}
+
+function buildSectionPayload(section: VideoSection, index: number): SavedItemPayload {
+  return {
+    title: section.title,
+    content: section.summary,
+    context: `Topic block #${index + 1}`,
+    metadata: {
+      section_index: index,
+      timestamp_seconds: section.timestamp_seconds,
+      semantic_keywords: section.semantic_keywords,
+    },
+    raw: section,
+  }
+}
+
+function buildSetupStepPayload(step: { description: string; command?: string }, index: number): SavedItemPayload {
+  return {
+    title: step.description.slice(0, 80),
+    content: step.description,
+    context: `Setup step #${index + 1}`,
+    metadata: { command: step.command },
+    raw: step,
+  }
+}
+
+function buildCommandPayload(command: string, index: number): SavedItemPayload {
+  return {
+    title: command.slice(0, 80),
+    content: command,
+    context: `Command #${index + 1}`,
+    metadata: { command_index: index },
+    raw: { command },
+  }
 }
 
 export interface SelectionApi {
   selected: Map<string, SavedItemSelection>
-  toggle: (key: string, itemType: SavedItemType, payload: unknown) => void
+  toggle: (key: string, itemType: SavedItemType, payload: SavedItemPayload) => void
 }
 
 interface Props {
@@ -34,33 +112,16 @@ interface Props {
 }
 
 export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCreateFolder, suggestedFolderName, selection }: Props) {
-  const [revealedCount, setRevealedCount] = useState(0)
-  const [showDetails, setShowDetails]     = useState(false)
-  const [showLinks, setShowLinks]         = useState(false)
+  // Render the entire pack immediately. The previous setInterval/setTimeout
+  // staggered reveal froze whenever Chrome backgrounded the side panel — so
+  // the full breakdown only "appeared" after the user clicked the panel
+  // again. CSS-driven fadeIn keeps the visual polish without depending on
+  // JS timers that the browser pauses in inactive tabs.
+  console.log('[RENDER-DEBUG] ResultCard | packId:', pack.id, '| takeaways:', pack.key_takeaways?.length ?? 0, '| sections:', pack.v2?.sections?.length ?? 0)
 
-  // Reset and replay reveal animation every time a new pack arrives
-  useEffect(() => {
-    setRevealedCount(0)
-    setShowDetails(false)
-    setShowLinks(false)
-
-    const total = pack.key_takeaways.length
-    let count = 0
-
-    const iv = setInterval(() => {
-      count++
-      setRevealedCount(count)
-      if (count >= total) {
-        clearInterval(iv)
-        setTimeout(() => setShowDetails(true), 250)
-        setTimeout(() => setShowLinks(true), 500)
-      }
-    }, 170)
-
-    return () => clearInterval(iv)
-  }, [pack.id])
-
-  const visibleBullets = pack.key_takeaways.slice(0, revealedCount)
+  const visibleBullets = pack.key_takeaways
+  const showDetails = true
+  const showLinks = true
 
   const sel = selection
   const isItemSelected = (key: string) => !!sel?.selected.has(key)
@@ -119,7 +180,7 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                     type="checkbox"
                     className={styles.itemCheckbox}
                     checked={checked}
-                    onChange={() => sel.toggle(key, 'takeaway', { text: b })}
+                    onChange={() => sel.toggle(key, 'takeaway', buildTakeawayPayload(b, i))}
                     aria-label="Select takeaway"
                   />
                 )}
@@ -131,13 +192,13 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                         const linkKey = `takeaway-link:${i}:${j}:${link.url}`
                         const linkChecked = isItemSelected(linkKey)
                         const matchedResource = findResourceForUrl(link.url)
-                        const savedPayload = matchedResource ?? link
+                        const linkContext = `Takeaway #${i + 1}: ${b.slice(0, 60)}`
                         return (
                           <RelatedLinkCard
                             key={linkKey}
                             link={link}
                             checked={linkChecked}
-                            onToggle={sel ? () => sel.toggle(linkKey, 'resource', savedPayload) : undefined}
+                            onToggle={sel ? () => sel.toggle(linkKey, 'resource', buildResourcePayload(link, matchedResource, linkContext)) : undefined}
                           />
                         )
                       })}
@@ -202,7 +263,20 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                         type="checkbox"
                         className={styles.itemCheckbox}
                         checked={checked}
-                        onChange={() => sel.toggle(key, 'resource', res)}
+                        onChange={() => sel.toggle(key, 'resource', {
+                          title: res.title,
+                          content: res.why_relevant ?? '',
+                          resource_url: res.url,
+                          context: 'Other resources',
+                          metadata: {
+                            type: res.type,
+                            confidence: res.confidence,
+                            mentioned_in_video: res.mentioned_in_video,
+                            mentioned_context: res.mentioned_context,
+                            user_action: res.user_action,
+                          },
+                          raw: res,
+                        })}
                         aria-label="Select resource"
                       />
                     )}
@@ -229,7 +303,14 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                         type="checkbox"
                         className={styles.itemCheckbox}
                         checked={checked}
-                        onChange={() => sel.toggle(key, 'resource', link)}
+                        onChange={() => sel.toggle(key, 'resource', {
+                          title: link.title,
+                          content: link.description ?? '',
+                          resource_url: link.url,
+                          context: 'Other resources',
+                          metadata: {},
+                          raw: link,
+                        })}
                         aria-label="Select resource"
                       />
                     )}
@@ -270,7 +351,7 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                         type="checkbox"
                         className={styles.itemCheckbox}
                         checked={checked}
-                        onChange={() => sel.toggle(key, 'setup_step', step)}
+                        onChange={() => sel.toggle(key, 'setup_step', buildSetupStepPayload(step, i))}
                         aria-label="Select setup step"
                       />
                     )}
@@ -293,7 +374,7 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                         type="checkbox"
                         className={styles.itemCheckbox}
                         checked={checked}
-                        onChange={() => sel.toggle(key, 'command', { command: cmd })}
+                        onChange={() => sel.toggle(key, 'command', buildCommandPayload(cmd, i))}
                         aria-label="Select command"
                       />
                     )}
@@ -367,7 +448,7 @@ function TopicBlock({
             type="checkbox"
             className={styles.itemCheckbox}
             checked={sectionChecked}
-            onChange={() => sel.toggle(sectionKey, 'section', section)}
+            onChange={() => sel.toggle(sectionKey, 'section', buildSectionPayload(section, index))}
             aria-label="Select topic block"
           />
         )}
@@ -404,13 +485,13 @@ function TopicBlock({
             const linkKey = `section-link:${index}:${j}:${link.url}`
             const linkChecked = isItemSelected(linkKey)
             const matchedResource = findResourceForUrl(link.url)
-            const savedPayload = matchedResource ?? link
+            const linkContext = `Topic: ${section.title}`
             return (
               <RelatedLinkCard
                 key={linkKey}
                 link={link}
                 checked={linkChecked}
-                onToggle={sel ? () => sel.toggle(linkKey, 'resource', savedPayload) : undefined}
+                onToggle={sel ? () => sel.toggle(linkKey, 'resource', buildResourcePayload(link, matchedResource, linkContext)) : undefined}
               />
             )
           })}
@@ -512,6 +593,16 @@ function renderUrlStatusBadge(
   }
   if (status === 'redirected') {
     return <span className={`${s.urlStatusBadge} ${s.urlStatusRedirect}`}>Redirect</span>
+  }
+  if (status === 'unverified') {
+    return (
+      <span
+        className={`${s.urlStatusBadge} ${s.urlStatusUnverified ?? s.urlStatusRedirect}`}
+        title="Could not verify this link via the GitHub API. Open it carefully and confirm the repository exists."
+      >
+        Unverified
+      </span>
+    )
   }
   return null
 }

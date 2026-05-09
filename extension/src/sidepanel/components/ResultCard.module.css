@@ -228,9 +228,10 @@
   vertical-align: middle;
 }
 
-.urlStatusValid    { color: var(--success); background: var(--success-bg); }
-.urlStatusInvalid  { color: var(--error); background: var(--error-bg); }
-.urlStatusRedirect { color: var(--text-3); background: var(--bg-3); }
+.urlStatusValid      { color: var(--success); background: var(--success-bg); }
+.urlStatusInvalid    { color: var(--error); background: var(--error-bg); }
+.urlStatusRedirect   { color: var(--text-3); background: var(--bg-3); }
+.urlStatusUnverified { color: #b45309; background: rgba(245, 158, 11, 0.18); }
 
 /* ── Fallback "Other resources" block ───────────────────────────────────── */
 .fallbackHeader {

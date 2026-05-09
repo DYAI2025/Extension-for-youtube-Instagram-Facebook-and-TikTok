@@ -5,6 +5,7 @@ import type {
   ExtractionStrategy,
   ExtractionStatus,
   Pack,
+  SavedItem,
   User,
   UserProfile,
   Collection,
@@ -37,6 +38,13 @@ interface AppState {
   // Profile (full user record from `profiles` table — null until loaded)
   profile: UserProfile | null
   setProfile: (profile: UserProfile | null) => void
+  // Loading + error state for the profile fetch — used by ProfileView to
+  // distinguish "still loading" from "failed to load" (so the user is never
+  // stuck on an indefinite spinner).
+  profileLoading: boolean
+  setProfileLoading: (loading: boolean) => void
+  profileError: string | null
+  setProfileError: (error: string | null) => void
 
   // Theme
   theme: Theme
@@ -68,10 +76,17 @@ interface AppState {
   // Library
   packs: Pack[]
   collections: Collection[]
+  savedItems: SavedItem[]
+  libraryLoading: boolean
+  libraryError: string | null
   setPacks: (packs: Pack[]) => void
   setCollections: (collections: Collection[]) => void
+  setSavedItems: (items: SavedItem[]) => void
+  setLibraryLoading: (loading: boolean) => void
+  setLibraryError: (error: string | null) => void
   addPack: (pack: Pack) => void
   addCollection: (collection: Collection) => void
+  addSavedItems: (items: SavedItem[]) => void
 
   // View routing
   view: 'main' | 'library' | 'auth' | 'profile'
@@ -103,6 +118,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   profile: null,
   setProfile: (profile) => set({ profile }),
+  profileLoading: false,
+  setProfileLoading: (profileLoading) => set({ profileLoading }),
+  profileError: null,
+  setProfileError: (profileError) => set({ profileError }),
 
   theme: savedTheme,
   setTheme: (theme) => {
@@ -141,10 +160,17 @@ export const useAppStore = create<AppState>((set) => ({
 
   packs: [],
   collections: [],
+  savedItems: [],
+  libraryLoading: false,
+  libraryError: null,
   setPacks: (packs) => set({ packs }),
   setCollections: (collections) => set({ collections }),
+  setSavedItems: (savedItems) => set({ savedItems }),
+  setLibraryLoading: (libraryLoading) => set({ libraryLoading }),
+  setLibraryError: (libraryError) => set({ libraryError }),
   addPack: (pack) => set((s) => ({ packs: [pack, ...s.packs] })),
   addCollection: (col) => set((s) => ({ collections: [...s.collections, col] })),
+  addSavedItems: (items) => set((s) => ({ savedItems: [...items, ...s.savedItems] })),
 
   view: 'main',
   setView: (view) => set({ view }),

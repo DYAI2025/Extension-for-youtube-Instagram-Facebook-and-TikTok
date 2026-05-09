@@ -1,9 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  decodeYouTubeRedirect,
   extractUrls,
   parseDescriptionLinks,
   parseTimestampedResources,
+  resolveAnchorHrefs,
   timestampToSeconds,
 } from '../../../shared/youtubeDescription.js'
 
@@ -65,4 +67,30 @@ test('parseDescriptionLinks: timestamped lines win over plain URL scan and label
 test('parseDescriptionLinks: no description → empty array', () => {
   assert.deepEqual(parseDescriptionLinks(''), [])
   assert.deepEqual(parseTimestampedResources(''), [])
+})
+
+test('decodeYouTubeRedirect: unwraps q-param URL', () => {
+  const wrapped = 'https://www.youtube.com/redirect?event=video_description&redir_token=x&q=https%3A%2F%2Fgithub.com%2Fopenai%2Fcodex'
+  assert.equal(decodeYouTubeRedirect(wrapped), 'https://github.com/openai/codex')
+})
+
+test('decodeYouTubeRedirect: leaves non-redirect URLs untouched', () => {
+  assert.equal(decodeYouTubeRedirect('https://github.com/openai/codex'), 'https://github.com/openai/codex')
+  assert.equal(decodeYouTubeRedirect(''), '')
+  assert.equal(decodeYouTubeRedirect('not a url'), 'not a url')
+})
+
+test('resolveAnchorHrefs: decodes wrapped redirects, dedupes, drops junk', () => {
+  const out = resolveAnchorHrefs([
+    'https://www.youtube.com/redirect?q=https%3A%2F%2Fgithub.com%2Fopenai%2Fcodex',
+    '/redirect?q=https%3A%2F%2Fgithub.com%2Fopenai%2Fcodex', // relative wrapped → same target
+    'https://supabase.com/docs',
+    '#section',
+    'javascript:void(0)',
+    '',
+  ])
+  assert.deepEqual(out, [
+    'https://github.com/openai/codex',
+    'https://supabase.com/docs',
+  ])
 })

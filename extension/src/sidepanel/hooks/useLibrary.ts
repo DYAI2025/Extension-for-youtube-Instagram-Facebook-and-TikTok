@@ -1,12 +1,55 @@
 import { useEffect } from 'react'
 import { supabase } from './useAuth'
 import { useAppStore } from '../store'
-import type { Pack, Collection, ExtractionPackV2, QuickFacts, RelatedLink } from '@shared/types'
+import type {
+  Pack,
+  Collection,
+  ExtractionPackV2,
+  QuickFacts,
+  RelatedLink,
+  SavedItem,
+  SavedItemType,
+  OutcomeMode,
+} from '@shared/types'
 
 // Supabase returns snake_case — map to camelCase Pack type.
-// Columns added in migration 004 are optional; rows saved before that migration
-// will simply have empty / undefined extras and still render via key_takeaways.
+// The deployed schema flattens the V2 extraction payload across many columns
+// (`video_explanation`, `key_takeaways`, `sections`, `resources`,
+// `setup_guide`, `warnings`, `source_coverage`) and stores the full original
+// extraction in `analysis_json`. Any legacy fields (`keywords`,
+// `relevant_points`, `important_links`, `quick_facts`) live inside
+// `analysis_json.legacy` — read from there so older rows still render.
 export function mapPackRow(row: Record<string, unknown>): Pack {
+  const analysis = (row.analysis_json as Record<string, unknown> | null) ?? null
+  const legacy = (analysis?.legacy as Record<string, unknown> | undefined) ?? undefined
+
+  // Reconstruct the V2 payload preferentially from columns; fall back to
+  // analysis_json for older rows that pre-date the column split.
+  const v2: ExtractionPackV2 | undefined = (() => {
+    if (analysis && typeof analysis === 'object' && 'sections' in analysis && Array.isArray((analysis as unknown as ExtractionPackV2).sections)) {
+      return analysis as unknown as ExtractionPackV2
+    }
+    if (Array.isArray(row.sections) || row.video_explanation || row.source_coverage) {
+      return {
+        title: (row.title as string) ?? '',
+        summary: (row.summary as string) ?? '',
+        video_explanation: (row.video_explanation as string) ?? '',
+        key_takeaways: (row.key_takeaways as string[] | null) ?? (row.bullets as string[] | null) ?? [],
+        sections: (row.sections as ExtractionPackV2['sections'] | null) ?? [],
+        resources: (row.resources as ExtractionPackV2['resources'] | null) ?? [],
+        setup_guide: (row.setup_guide as ExtractionPackV2['setup_guide'] | null) ?? { exists: false },
+        warnings: (row.warnings as string[] | null) ?? [],
+        source_coverage: (row.source_coverage as ExtractionPackV2['source_coverage'] | null) ?? {
+          transcript_available: false,
+          extraction_source: 'mixed',
+          extraction_scope: 'current_segment',
+          confidence: 'low',
+        },
+      }
+    }
+    return undefined
+  })()
+
   return {
     id: row.id as string,
     userId: row.user_id as string,
@@ -14,13 +57,16 @@ export function mapPackRow(row: Record<string, unknown>): Pack {
     url: row.url as string,
     platform: row.platform as Pack['platform'],
     mode: row.mode as Pack['mode'],
-    key_takeaways: (row.bullets as string[]) ?? [],  // DB column is 'bullets'
+    key_takeaways:
+      (row.key_takeaways as string[] | null) ??
+      (row.bullets as string[] | null) ??
+      [],
     summary: (row.summary as string | null) ?? undefined,
-    keywords: (row.keywords as string[] | null) ?? undefined,
-    relevant_points: (row.relevant_points as string[] | null) ?? undefined,
-    important_links: (row.important_links as RelatedLink[] | null) ?? undefined,
-    quick_facts: (row.quick_facts as QuickFacts | null) ?? undefined,
-    v2: (row.v2 as ExtractionPackV2 | null) ?? undefined,
+    keywords: (legacy?.keywords as string[] | undefined) ?? undefined,
+    relevant_points: (legacy?.relevant_points as string[] | undefined) ?? undefined,
+    important_links: (legacy?.important_links as RelatedLink[] | undefined) ?? undefined,
+    quick_facts: (legacy?.quick_facts as QuickFacts | undefined) ?? undefined,
+    v2,
     savedAt: row.saved_at as string,
   }
 }
@@ -40,30 +86,79 @@ function mapCollection(row: Record<string, unknown>): Collection {
   }
 }
 
+function mapSavedItem(row: Record<string, unknown>): SavedItem {
+  const payload = (row.payload as SavedItem['payload'] | null) ?? { title: '', raw: null }
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    packId: (row.pack_id as string | null) ?? null,
+    itemType: row.item_type as SavedItemType,
+    payload,
+    videoUrl: (row.video_url as string | null) ?? null,
+    videoTitle: (row.video_title as string | null) ?? null,
+    mode: (row.mode as OutcomeMode | null) ?? null,
+    createdAt: row.created_at as string,
+  }
+}
+
+export async function loadLibrary(): Promise<void> {
+  const state = useAppStore.getState()
+  const user = state.user
+  if (!user) return
+
+  state.setLibraryLoading(true)
+  state.setLibraryError(null)
+  console.log('[LIBRARY-DEBUG] load: start | userId-suffix:', user.id.slice(0, 8))
+  try {
+    const [
+      { data: packs, error: packsError },
+      { data: collections, error: collectionsError },
+      { data: items, error: itemsError },
+    ] = await Promise.all([
+      supabase
+        .from('packs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('saved_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('collections')
+        .select('*, collection_items(*)')
+        .eq('user_id', user.id),
+      supabase
+        .from('saved_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(200),
+    ])
+
+    if (packsError) console.warn('[LIBRARY-DEBUG] packs load failed |', packsError.message)
+    if (collectionsError) console.warn('[LIBRARY-DEBUG] collections load failed |', collectionsError.message)
+    if (itemsError) console.warn('[LIBRARY-DEBUG] saved_items load failed |', itemsError.message)
+
+    const fresh = useAppStore.getState()
+    if (packs) fresh.setPacks((packs as Array<Record<string, unknown>>).map(mapPackRow))
+    if (collections) fresh.setCollections((collections as Array<Record<string, unknown>>).map(mapCollection))
+    if (items) fresh.setSavedItems((items as Array<Record<string, unknown>>).map(mapSavedItem))
+
+    const errorParts = [packsError?.message, collectionsError?.message, itemsError?.message].filter(Boolean)
+    fresh.setLibraryError(errorParts.length > 0 ? errorParts.join(' | ') : null)
+    console.log('[LIBRARY-DEBUG] load: ok | packs:', packs?.length ?? 0, '| collections:', collections?.length ?? 0, '| savedItems:', items?.length ?? 0)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Unknown error'
+    console.warn('[LIBRARY-DEBUG] load: unexpected error |', msg)
+    useAppStore.getState().setLibraryError(msg)
+  } finally {
+    useAppStore.getState().setLibraryLoading(false)
+  }
+}
+
 export function useLibrary() {
-  const { user, setPacks, setCollections } = useAppStore()
+  const user = useAppStore((s) => s.user)
 
   useEffect(() => {
     if (!user) return
-
-    async function load() {
-      const [{ data: packs }, { data: collections }] = await Promise.all([
-        supabase
-          .from('packs')
-          .select('*')
-          .eq('user_id', user!.id)
-          .order('saved_at', { ascending: false })
-          .limit(50),
-        supabase
-          .from('collections')
-          .select('*, collection_items(*)')
-          .eq('user_id', user!.id),
-      ])
-
-      if (packs) setPacks((packs as Array<Record<string, unknown>>).map(mapPackRow))
-      if (collections) setCollections((collections as Array<Record<string, unknown>>).map(mapCollection))
-    }
-
-    load()
-  }, [user, setPacks, setCollections])
+    void loadLibrary()
+  }, [user])
 }

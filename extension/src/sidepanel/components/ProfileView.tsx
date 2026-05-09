@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
-import { updateProfile } from '../hooks/useProfile'
+import { updateProfile, loadProfile } from '../hooks/useProfile'
 import { supabase } from '../hooks/useAuth'
 import type { OutcomeMode } from '@shared/types'
 import styles from './ProfileView.module.css'
@@ -26,6 +26,8 @@ const LANGUAGE_OPTIONS: Array<{ code: string; label: string }> = [
 export function ProfileView() {
   const profile = useAppStore((s) => s.profile)
   const user = useAppStore((s) => s.user)
+  const profileLoading = useAppStore((s) => s.profileLoading)
+  const profileError = useAppStore((s) => s.profileError)
 
   const [displayName, setDisplayName] = useState('')
   const [language, setLanguage] = useState('en')
@@ -67,9 +69,32 @@ export function ProfileView() {
   }
 
   if (!profile) {
+    if (profileError) {
+      return (
+        <div className={styles.root}>
+          <p className={styles.error}>Could not load profile: {profileError}</p>
+          <button
+            type="button"
+            className={styles.saveBtn}
+            onClick={() => { void loadProfile() }}
+          >
+            Retry
+          </button>
+          <div className={styles.signOutRow}>
+            <button
+              type="button"
+              className={styles.signOutBtn}
+              onClick={() => supabase.auth.signOut()}
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className={styles.root}>
-        <p className={styles.empty}>Loading profile…</p>
+        <p className={styles.empty}>{profileLoading ? 'Loading profile…' : 'No profile found.'}</p>
       </div>
     )
   }
@@ -81,7 +106,7 @@ export function ProfileView() {
       <div className={styles.section}>
         <span className={styles.sectionLabel}>Account</span>
         <div className={styles.identity}>
-          <span className={styles.email}>{profile.email}</span>
+          <span className={styles.email}>{user.email || 'Signed in'}</span>
           <div className={styles.planRow}>
             <span className={`${styles.planBadge} ${isPro ? styles.planPro : styles.planFree}`}>
               {isPro ? 'Pro' : 'Free'}

@@ -549,21 +549,57 @@ export function parseV2(text: string, input: ExtractInput): ExtractionPackV2 {
  * resource is marked as mentioned_in_video=true (the creator put it in their
  * description) with mentioned_context taken from the description label or
  * timestamp.
+ *
+ * Also: any AI-generated resource whose URL is a "truncated stub" (e.g.
+ * `https://github.com/owner/r…` or just `https://github.com/owner`) is
+ * upgraded to the full URL when the description's anchor href list contains
+ * a same-host match. The decoded anchor href is the only authoritative
+ * source for the exact destination YouTube was sending users to — display
+ * text is routinely cut off and produces 404s.
  */
 function mergeDescriptionLinksIntoResources(
   resources: Resource[],
   yt?: YouTubeSourceBundle,
 ): Resource[] {
-  if (!yt || !yt.descriptionLinks?.length) return resources
-  const known = new Set(resources.map((r) => r.url))
-  const added: Resource[] = []
-  for (const link of yt.descriptionLinks) {
-    if (known.has(link.url)) continue
-    known.add(link.url)
+  if (!yt) return resources
+  const anchorUrls = yt.descriptionAnchorUrls ?? []
+
+  // Phase A: rewrite stub URLs in the existing resources using anchor URLs as truth
+  const upgraded = resources.map((r) => {
+    const better = pickBetterUrl(r.url, anchorUrls)
+    if (!better || better === r.url) return r
+    return { ...r, url: better }
+  })
+
+  // Phase B: dedupe (a stub URL and its decoded anchor URL may both have been parsed)
+  const dedup = new Map<string, Resource>()
+  for (const r of upgraded) {
+    if (!dedup.has(r.url)) dedup.set(r.url, r)
+  }
+
+  // Phase C: anchor URLs that the AI never mentioned at all → add as creator-listed
+  for (const url of anchorUrls) {
+    if (dedup.has(url)) continue
+    dedup.set(url, {
+      title: hostnameOf(url) || url,
+      url,
+      type: 'other',
+      mentioned_in_video: true,
+      mentioned_context: 'From video description (anchor link).',
+      why_relevant: 'Linked by the creator in the YouTube description.',
+      user_action: 'Open the link to use this resource.',
+      confidence: 'high',
+      validation: 'unchecked',
+    })
+  }
+
+  // Phase D: timestamped/text-extracted description links the AI dropped
+  for (const link of yt.descriptionLinks ?? []) {
+    if (dedup.has(link.url)) continue
     const ctx = link.timestamp
       ? `From video description (${link.timestamp})${link.title ? `: ${link.title}` : ''}`
       : `From video description${link.title ? `: ${link.title}` : ''}`
-    added.push({
+    dedup.set(link.url, {
       title: link.title || hostnameOf(link.url) || link.url,
       url: link.url,
       type: 'other',
@@ -572,9 +608,51 @@ function mergeDescriptionLinksIntoResources(
       why_relevant: 'Listed by the creator in the YouTube description.',
       user_action: 'Open the link to use this resource.',
       confidence: 'high',
+      validation: 'unchecked',
     })
   }
-  return [...resources, ...added]
+
+  return [...dedup.values()]
+}
+
+/**
+ * Decide whether a candidate URL from the AI should be replaced by one of
+ * the (decoded) anchor URLs harvested from the YouTube description.
+ *
+ * Replaces when the AI URL is "less specific" than an anchor URL on the same
+ * host — typically because the AI copied truncated display text:
+ *   `https://github.com/owner` ← anchor `https://github.com/owner/repo`
+ *   `https://github.com/owner/r` ← anchor `https://github.com/owner/repo`
+ */
+function pickBetterUrl(candidate: string, anchors: string[]): string | null {
+  if (!candidate || anchors.length === 0) return null
+  let cu: URL
+  try { cu = new URL(candidate) } catch { return null }
+  const cHost = cu.hostname.replace(/^www\./, '').toLowerCase()
+  const cPath = cu.pathname.replace(/\/$/, '')
+
+  for (const anchor of anchors) {
+    let au: URL
+    try { au = new URL(anchor) } catch { continue }
+    const aHost = au.hostname.replace(/^www\./, '').toLowerCase()
+    if (aHost !== cHost) continue
+    const aPath = au.pathname.replace(/\/$/, '')
+
+    // Anchor extends the candidate path → candidate was truncated
+    if (aPath.length > cPath.length && aPath.startsWith(cPath)) {
+      return anchor
+    }
+    // GitHub: AI may have produced a parent ("/owner") while the anchor has
+    // owner/repo. Prefer the deeper one.
+    if (cHost === 'github.com') {
+      const aSegs = aPath.split('/').filter(Boolean)
+      const cSegs = cPath.split('/').filter(Boolean)
+      if (aSegs.length >= 2 && cSegs.length < 2 && aSegs[0] === cSegs[0]) {
+        return anchor
+      }
+    }
+  }
+  return null
 }
 
 function hostnameOf(url: string): string | null {

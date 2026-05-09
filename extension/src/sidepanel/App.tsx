@@ -7,7 +7,7 @@ import { useProfile } from './hooks/useProfile'
 import { PlatformBadge } from './components/PlatformBadge'
 import { ExtractionProgress } from './components/ExtractionProgress'
 import { ResultCard } from './components/ResultCard'
-import type { SavedItemType, SavedItemSelection } from './components/ResultCard'
+import type { SavedItemType, SavedItemSelection, SavedItemPayload } from './components/ResultCard'
 import { ThemeToggle } from './components/ThemeToggle'
 import { MemoryView } from './components/memory/MemoryView'
 import { AuthView } from './components/AuthView'
@@ -48,6 +48,8 @@ export function App() {
   // pack changes (new extraction or after a successful save).
   const [selectedItems, setSelectedItems] = useState<Map<string, SavedItemSelection>>(new Map())
   const [savingSelected, setSavingSelected] = useState(false)
+  // Toast-style status banner for save / folder operations. `null` when idle.
+  const [saveStatus, setSaveStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
 
   // Reset selection any time the visible pack swaps to a different one.
   useEffect(() => {
@@ -56,7 +58,7 @@ export function App() {
 
   const selectionCount = selectedItems.size
 
-  function toggleSelectItem(key: string, itemType: SavedItemType, payload: unknown) {
+  function toggleSelectItem(key: string, itemType: SavedItemType, payload: SavedItemPayload) {
     setSelectedItems((prev) => {
       const next = new Map(prev)
       if (next.has(key)) next.delete(key)
@@ -100,6 +102,7 @@ export function App() {
     if (!user) { setView('auth'); return }
     if (!latestPack || selectedItems.size === 0 || savingSelected) return
     setSavingSelected(true)
+    setSaveStatus(null)
     const rows = Array.from(selectedItems.values()).map((entry) => ({
       user_id: user.id,
       pack_id: savedIds.has(latestPack.id) ? latestPack.id : null,
@@ -109,11 +112,17 @@ export function App() {
       video_title: latestPack.title,
       mode: latestPack.mode,
     }))
+    console.log('[SAVE-DEBUG] saved_items: insert | rows:', rows.length, '| types:', rows.map((r) => r.item_type))
     const { error } = await supabase.from('saved_items').insert(rows)
     setSavingSelected(false)
-    if (!error) {
-      setSelectedItems(new Map())
+    if (error) {
+      console.warn('[SAVE-DEBUG] saved_items: insert failed |', error.message)
+      setSaveStatus({ kind: 'err', msg: `Save failed: ${error.message}` })
+      return
     }
+    console.log('[SAVE-DEBUG] saved_items: insert ok |', rows.length, 'row(s)')
+    setSelectedItems(new Map())
+    setSaveStatus({ kind: 'ok', msg: `Saved ${rows.length} item${rows.length === 1 ? '' : 's'}.` })
   }
 
   async function handleSaveFullAnalysis() {
@@ -126,52 +135,138 @@ export function App() {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // After a successful sign-in, leave the AuthView so the user lands on their
+  // profile (or back on the main panel). Without this, the OAuth popup closes
+  // but the AuthView stays visible — making the login feel "stuck".
+  useEffect(() => {
+    if (user && view === 'auth') {
+      console.log('[AUTH-DEBUG] post-login: leaving AuthView')
+      setView('profile')
+    }
+  }, [user, view, setView])
+
+  // Auto-dismiss success banners after 4s. Errors stay until the user closes
+  // them so they cannot be missed.
+  useEffect(() => {
+    if (!saveStatus || saveStatus.kind !== 'ok') return
+    const t = setTimeout(() => setSaveStatus(null), 4000)
+    return () => clearTimeout(t)
+  }, [saveStatus])
+
   async function handleSave(pack: Pack, folderId: string | null) {
     if (!user) { setView('auth'); return }
     if (savedIds.has(pack.id)) return
 
-    const { error } = await supabase.from('packs').insert({
+    setSaveStatus({ kind: 'ok', msg: 'Saving…' })
+    console.log('[SAVE-DEBUG] packs: insert | packId:', pack.id, '| folderId:', folderId, '| hasV2:', !!pack.v2)
+
+    // Build the canonical resources[] for the row column. Prefer v2.resources
+    // (validated by the server). When the legacy `important_links` is the only
+    // link source, project it into the resource shape so saved rows still
+    // surface the links via the resources column.
+    const v2 = pack.v2
+    const flatResources = v2?.resources?.length
+      ? v2.resources
+      : (pack.important_links ?? []).map((l) => ({
+          title: l.title,
+          url: l.url,
+          type: 'other' as const,
+          mentioned_in_video: false,
+          why_relevant: l.description ?? '',
+          user_action: '',
+          confidence: 'low' as const,
+        }))
+
+    // analysis_json keeps the FULL extraction payload — including legacy
+    // fields (keywords, relevant_points, quick_facts, important_links) so a
+    // future read can fully reconstruct the pack without losing data.
+    const analysisJson = {
+      ...(v2 ?? {}),
+      legacy: {
+        keywords: pack.keywords ?? [],
+        relevant_points: pack.relevant_points ?? [],
+        important_links: pack.important_links ?? [],
+        quick_facts: pack.quick_facts ?? null,
+      },
+    }
+
+    // Normalize every field for the deployed packs schema. Several JSON columns
+    // (notably setup_guide, source_coverage, sections, resources, warnings) are
+    // NOT NULL — sending `null` violates the constraint. Default to {}/[] so
+    // an analysis missing optional fields still saves cleanly. The full
+    // unfiltered extraction lives in analysis_json so nothing is lost.
+    const packPayload = {
       id: pack.id,
       user_id: user.id,
-      title: pack.title,
-      url: pack.url,
-      platform: pack.platform,
-      mode: pack.mode,
-      bullets: pack.key_takeaways,
-      summary: pack.summary ?? null,
-      keywords: pack.keywords ?? [],
-      relevant_points: pack.relevant_points ?? [],
-      important_links: pack.important_links ?? [],
-      quick_facts: pack.quick_facts ?? null,
-      v2: pack.v2 ?? null,
-    })
-
-    if (!error) {
-      if (folderId) {
-        await supabase.from('collection_items').insert({
-          collection_id: folderId,
-          type: 'pack',
-          ref_id: pack.id,
-          position: 0,
-        })
-      }
-      addPack(pack)
-      setSavedIds((prev) => new Set(prev).add(pack.id))
+      title: pack.title || 'Untitled analysis',
+      url: pack.url ?? '',
+      platform: pack.platform ?? 'youtube',
+      mode: pack.mode ?? 'knowledge',
+      bullets: pack.key_takeaways ?? [],
+      summary: pack.summary ?? '',
+      video_explanation: v2?.video_explanation ?? '',
+      key_takeaways: pack.key_takeaways ?? [],
+      sections: v2?.sections ?? [],
+      resources: flatResources ?? [],
+      setup_guide: v2?.setup_guide ?? {},
+      warnings: v2?.warnings ?? [],
+      source_coverage: v2?.source_coverage ?? {},
+      analysis_json: analysisJson,
     }
+    const { error } = await supabase.from('packs').insert(packPayload)
+
+    if (error) {
+      console.warn('[SAVE-DEBUG] packs: insert failed |', error.message)
+      setSaveStatus({ kind: 'err', msg: `Save failed: ${error.message}` })
+      return
+    }
+
+    console.log('[SAVE-DEBUG] packs: insert ok')
+
+    if (folderId) {
+      const { error: ciError } = await supabase.from('collection_items').insert({
+        collection_id: folderId,
+        type: 'pack',
+        ref_id: pack.id,
+        position: 0,
+      })
+      if (ciError) {
+        console.warn('[SAVE-DEBUG] collection_items: insert failed |', ciError.message)
+        setSaveStatus({ kind: 'err', msg: `Saved, but folder link failed: ${ciError.message}` })
+        addPack(pack)
+        setSavedIds((prev) => new Set(prev).add(pack.id))
+        return
+      }
+      console.log('[SAVE-DEBUG] collection_items: insert ok')
+    }
+
+    addPack(pack)
+    setSavedIds((prev) => new Set(prev).add(pack.id))
+    setSaveStatus({ kind: 'ok', msg: 'Saved.' })
   }
 
   async function handleCreateFolder(name: string) {
     if (!user) { setView('auth'); return }
 
+    console.log('[SAVE-DEBUG] collections: insert |', { name })
     const { data, error } = await supabase
       .from('collections')
       .insert({ user_id: user.id, name })
       .select()
       .single()
 
-    if (!error && data) {
+    if (error) {
+      console.warn('[SAVE-DEBUG] collections: insert failed |', error.message)
+      setSaveStatus({ kind: 'err', msg: `Create folder failed: ${error.message}` })
+      setShowNewFolderModal(false)
+      return
+    }
+
+    if (data) {
+      console.log('[SAVE-DEBUG] collections: insert ok | id-suffix:', String(data.id).slice(0, 8))
       addCollection({ id: data.id, userId: data.user_id, name: data.name, items: [], createdAt: data.created_at })
       setSelectedFolder(data.id)
+      setSaveStatus({ kind: 'ok', msg: `Folder "${data.name}" created.` })
     }
     setShowNewFolderModal(false)
   }
@@ -343,6 +438,23 @@ export function App() {
               title="Save the full analysis to your library"
             >
               {savedIds.has(latestPack.id) ? 'Saved ✓' : 'Save Full Analysis'}
+            </button>
+          </div>
+        )}
+
+        {saveStatus && (
+          <div
+            className={saveStatus.kind === 'err' ? styles.saveBanner + ' ' + styles.saveBannerErr : styles.saveBanner}
+            role={saveStatus.kind === 'err' ? 'alert' : 'status'}
+          >
+            <span>{saveStatus.msg}</span>
+            <button
+              type="button"
+              className={styles.saveBannerClose}
+              onClick={() => setSaveStatus(null)}
+              aria-label="Dismiss"
+            >
+              ✕
             </button>
           </div>
         )}
