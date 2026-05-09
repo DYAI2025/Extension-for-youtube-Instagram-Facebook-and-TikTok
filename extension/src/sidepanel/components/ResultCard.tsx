@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AttachedLink, Pack, Resource, VideoSection } from '@shared/types'
 import { useAppStore } from '../store'
+import { useT } from '../i18n'
 import styles from './ResultCard.module.css'
 
 // Allowed item_type values for saved_items, mirrored from the Supabase check
@@ -119,6 +120,16 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
   // JS timers that the browser pauses in inactive tabs.
   console.log('[RENDER-DEBUG] ResultCard | packId:', pack.id, '| takeaways:', pack.key_takeaways?.length ?? 0, '| sections:', pack.v2?.sections?.length ?? 0)
 
+  const t = useT()
+  // The summary + key-takeaway bullets together form the primary content
+  // block. A single chevron on the upper-left collapses both — preserving
+  // checkbox selection across collapse/expand because the parent owns the
+  // selection map (unmounting a bullet does NOT clear it).
+  const summary = pack.summary ?? ''
+  const [overviewOpen, setOverviewOpen] = useState(true)
+  const [resourcesOpen, setResourcesOpen] = useState(true)
+  const [setupOpen, setSetupOpen] = useState(true)
+
   const visibleBullets = pack.key_takeaways
   const showDetails = true
   const showLinks = true
@@ -149,66 +160,90 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
         {isSaved && <span className={`${styles.saveBtn} ${styles.saved}`} aria-label="Saved">✓</span>}
       </div>
 
-      {pack.summary && (
-        <p className={`${styles.summary} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
-          {pack.summary}
-        </p>
-      )}
+      {(summary || visibleBullets.length > 0) && (
+        <section
+          className={`${styles.overviewSection} ${styles.fadeIn}`}
+          style={{ '--delay': '0ms' } as React.CSSProperties}
+        >
+          <button
+            type="button"
+            className={styles.overviewHeader}
+            onClick={() => setOverviewOpen((v) => !v)}
+            aria-expanded={overviewOpen}
+            aria-label={overviewOpen ? t('hideSettings') : t('showSettings')}
+          >
+            <Chevron open={overviewOpen} />
+            <span className={styles.overviewLabel}>{t('summary')}</span>
+            {!overviewOpen && visibleBullets.length > 0 && (
+              <span className={styles.overviewCount}>
+                {visibleBullets.length}
+              </span>
+            )}
+          </button>
 
-      {pack.keywords && pack.keywords.length > 0 && (
-        <div className={`${styles.keywords} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
-          {pack.keywords.map((k, i) => (
-            <span key={i} className={styles.keyword}>{k}</span>
-          ))}
-        </div>
-      )}
+          {!overviewOpen && summary && (
+            <p className={styles.overviewPreview} title={summary}>{summary}</p>
+          )}
 
-      {visibleBullets.length > 0 && (
-        <ul className={styles.bullets}>
-          {visibleBullets.map((b, i) => {
-            const key = `takeaway:${i}`
-            const checked = isItemSelected(key)
-            const attached = v2?.key_takeaway_links?.[i] ?? []
-            return (
-              <li
-                key={i}
-                className={`${styles.bullet} ${styles.fadeIn} ${checked ? styles.bulletSelected : ''}`}
-                style={{ '--delay': '0ms' } as React.CSSProperties}
-              >
-                {sel && (
-                  <input
-                    type="checkbox"
-                    className={styles.itemCheckbox}
-                    checked={checked}
-                    onChange={() => sel.toggle(key, 'takeaway', buildTakeawayPayload(b, i))}
-                    aria-label="Select takeaway"
-                  />
-                )}
-                <div className={styles.bulletBody}>
-                  <span className={styles.bulletText}>{b}</span>
-                  {attached.length > 0 && (
-                    <div className={styles.relatedLinks}>
-                      {attached.map((link, j) => {
-                        const linkKey = `takeaway-link:${i}:${j}:${link.url}`
-                        const linkChecked = isItemSelected(linkKey)
-                        const matchedResource = findResourceForUrl(link.url)
-                        const linkContext = `Takeaway #${i + 1}: ${b.slice(0, 60)}`
-                        return (
-                          <RelatedLinkCard
-                            key={linkKey}
-                            link={link}
-                            checked={linkChecked}
-                            onToggle={sel ? () => sel.toggle(linkKey, 'resource', buildResourcePayload(link, matchedResource, linkContext)) : undefined}
-                          />
-                        )
-                      })}
+          {overviewOpen && summary && (
+            <p className={`${styles.summary} ${styles.collapsibleSummary}`}>{summary}</p>
+          )}
+
+          {overviewOpen && pack.keywords && pack.keywords.length > 0 && (
+            <div className={styles.keywords}>
+              {pack.keywords.map((k, i) => (
+                <span key={i} className={styles.keyword}>{k}</span>
+              ))}
+            </div>
+          )}
+
+          {overviewOpen && visibleBullets.length > 0 && (
+            <ul className={styles.bullets}>
+              {visibleBullets.map((b, i) => {
+                const key = `takeaway:${i}`
+                const checked = isItemSelected(key)
+                const attached = v2?.key_takeaway_links?.[i] ?? []
+                return (
+                  <li
+                    key={i}
+                    className={`${styles.bullet} ${checked ? styles.bulletSelected : ''}`}
+                  >
+                    {sel && (
+                      <input
+                        type="checkbox"
+                        className={styles.itemCheckbox}
+                        checked={checked}
+                        onChange={() => sel.toggle(key, 'takeaway', buildTakeawayPayload(b, i))}
+                        aria-label="Select takeaway"
+                      />
+                    )}
+                    <div className={styles.bulletBody}>
+                      <span className={styles.bulletText}>{b}</span>
+                      {attached.length > 0 && (
+                        <div className={styles.relatedLinks}>
+                          {attached.map((link, j) => {
+                            const linkKey = `takeaway-link:${i}:${j}:${link.url}`
+                            const linkChecked = isItemSelected(linkKey)
+                            const matchedResource = findResourceForUrl(link.url)
+                            const linkContext = `Takeaway #${i + 1}: ${b.slice(0, 60)}`
+                            return (
+                              <RelatedLinkCard
+                                key={linkKey}
+                                link={link}
+                                checked={linkChecked}
+                                onToggle={sel ? () => sel.toggle(linkKey, 'resource', buildResourcePayload(link, matchedResource, linkContext)) : undefined}
+                              />
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </li>
-            )
-          })}
-        </ul>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
       )}
 
       {showDetails && v2?.sections && v2.sections.length > 0 && (
@@ -251,8 +286,16 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
 
       {showLinks && showFallbackBlock && (
         <div className={`${styles.links} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
-          <p className={styles.fallbackHeader}>Other resources</p>
-          {unassignedResources.length > 0
+          <button
+            type="button"
+            className={styles.collapsibleHeader}
+            onClick={() => setResourcesOpen((v) => !v)}
+            aria-expanded={resourcesOpen}
+          >
+            <span>{t('otherResources')}</span>
+            <Chevron open={resourcesOpen} />
+          </button>
+          {resourcesOpen && (unassignedResources.length > 0
             ? unassignedResources.map((res, i) => {
                 const key = `resource:unassigned:${i}:${res.url}`
                 const checked = isItemSelected(key)
@@ -323,7 +366,7 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
                     </a>
                   </div>
                 )
-              })}
+              }))}
         </div>
       )}
 
@@ -331,9 +374,17 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
         (pack.v2.setup_guide.steps?.length ?? 0) + (pack.v2.setup_guide.commands?.length ?? 0) > 0
       ) && (
         <div className={`${styles.setupGuide} ${styles.fadeIn}`} style={{ '--delay': '0ms' } as React.CSSProperties}>
-          <p className={styles.sectionLabel}>{pack.v2.setup_guide.title ?? 'Setup'}</p>
+          <button
+            type="button"
+            className={styles.collapsibleHeader}
+            onClick={() => setSetupOpen((v) => !v)}
+            aria-expanded={setupOpen}
+          >
+            <span>{pack.v2.setup_guide.title ?? t('setupGuide')}</span>
+            <Chevron open={setupOpen} />
+          </button>
 
-          {pack.v2.setup_guide.steps && pack.v2.setup_guide.steps.length > 0 && (
+          {setupOpen && pack.v2.setup_guide.steps && pack.v2.setup_guide.steps.length > 0 && (
             <ul className={styles.bullets} style={{ borderTop: 'none', paddingTop: 0 }}>
               {pack.v2.setup_guide.steps.map((step, i) => {
                 const key = `setup_step:${i}`
@@ -362,7 +413,7 @@ export function ResultCard({ pack, isSaved, selectedFolder, onFolderChange, onCr
             </ul>
           )}
 
-          {pack.v2.setup_guide.commands && pack.v2.setup_guide.commands.length > 0 && (
+          {setupOpen && pack.v2.setup_guide.commands && pack.v2.setup_guide.commands.length > 0 && (
             <div className={styles.commands}>
               {pack.v2.setup_guide.commands.map((cmd, i) => {
                 const key = `command:${i}:${cmd}`
@@ -439,6 +490,13 @@ function TopicBlock({
   const sectionKey = `section:${index}`
   const sectionChecked = isItemSelected(sectionKey)
   const ts = formatTimestamp(section.timestamp_seconds)
+  // Each topic block has its own chevron toggle. Default expanded so users
+  // see content immediately; the count of inner items is shown when collapsed
+  // so the block still hints at what's inside.
+  const [open, setOpen] = useState(true)
+  const innerCount =
+    (section.key_points?.length ?? 0) +
+    (section.related_links?.length ?? 0)
 
   return (
     <div className={`${styles.topicBlock} ${sectionChecked ? styles.bulletSelected : ''}`}>
@@ -459,9 +517,22 @@ function TopicBlock({
           </p>
           {section.summary && <p className={styles.topicSummary}>{section.summary}</p>}
         </div>
+        <button
+          type="button"
+          className={styles.topicCollapseBtn}
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-label={open ? 'Collapse topic' : 'Expand topic'}
+          title={open ? 'Collapse' : `Expand (${innerCount} items)`}
+        >
+          {!open && innerCount > 0 && (
+            <span className={styles.topicCollapseCount}>{innerCount}</span>
+          )}
+          <Chevron open={open} />
+        </button>
       </div>
 
-      {section.semantic_keywords && section.semantic_keywords.length > 0 && (
+      {open && section.semantic_keywords && section.semantic_keywords.length > 0 && (
         <div className={styles.topicKeywords}>
           {section.semantic_keywords.map((kw, j) => (
             <span key={j} className={styles.topicKeyword}>{kw}</span>
@@ -469,7 +540,7 @@ function TopicBlock({
         </div>
       )}
 
-      {section.key_points && section.key_points.length > 0 && (
+      {open && section.key_points && section.key_points.length > 0 && (
         <ul className={styles.topicPoints}>
           {section.key_points.map((point, j) => (
             <li key={j} className={`${styles.bullet} ${styles.bulletMuted}`}>
@@ -479,7 +550,7 @@ function TopicBlock({
         </ul>
       )}
 
-      {section.related_links && section.related_links.length > 0 && (
+      {open && section.related_links && section.related_links.length > 0 && (
         <div className={styles.relatedLinks}>
           {section.related_links.map((link, j) => {
             const linkKey = `section-link:${index}:${j}:${link.url}`
@@ -560,6 +631,25 @@ function RelatedLinkCard({
   )
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`${styles.collapsibleChevron} ${open ? styles.collapsibleChevronOpen : ''}`}
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  )
+}
+
 function ExternalLinkIcon() {
   return (
     <svg
@@ -616,32 +706,36 @@ function FolderPicker({ selected, onSelect, onCreateNew, suggestedName }: {
   suggestedName?: string
 }) {
   const { collections } = useAppStore()
+  const t = useT()
   const [open, setOpen] = useState(false)
-  const label = selected ? (collections.find((c) => c.id === selected)?.name ?? 'Folder') : 'No folder'
+  const label = selected ? (collections.find((c) => c.id === selected)?.name ?? t('folder')) : t('noFolder')
 
   return (
-    <div className={styles.fpRoot}>
-      <button className={styles.fpTrigger} onClick={() => setOpen(!open)}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-        </svg>
-        {label}
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: '150ms' }}>
-          <polyline points="6 9 12 15 18 9"/>
-        </svg>
-      </button>
-      {open && (
-        <div className={styles.fpDropdown}>
-          <button className={`${styles.fpOption} ${!selected ? styles.fpActive : ''}`} onClick={() => { onSelect(null); setOpen(false) }}>No folder</button>
-          {collections.map((c) => (
-            <button key={c.id} className={`${styles.fpOption} ${selected === c.id ? styles.fpActive : ''}`} onClick={() => { onSelect(c.id); setOpen(false) }}>{c.name}</button>
-          ))}
-          <div className={styles.fpDivider} />
-          <button className={styles.fpCreate} onClick={() => { onCreateNew(); setOpen(false) }}>
-            {suggestedName ? `+ New: ${suggestedName}` : '+ New folder'}
-          </button>
-        </div>
-      )}
+    <div className={styles.fpRow}>
+      <span className={styles.fpLabel}>{t('folderColon')}</span>
+      <div className={styles.fpRoot}>
+        <button className={styles.fpTrigger} onClick={() => setOpen(!open)}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          {label}
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: '150ms' }}>
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        {open && (
+          <div className={styles.fpDropdown}>
+            <button className={`${styles.fpOption} ${!selected ? styles.fpActive : ''}`} onClick={() => { onSelect(null); setOpen(false) }}>{t('noFolder')}</button>
+            {collections.map((c) => (
+              <button key={c.id} className={`${styles.fpOption} ${selected === c.id ? styles.fpActive : ''}`} onClick={() => { onSelect(c.id); setOpen(false) }}>{c.name}</button>
+            ))}
+            <div className={styles.fpDivider} />
+            <button className={styles.fpCreate} onClick={() => { onCreateNew(); setOpen(false) }}>
+              {suggestedName ? `+ ${t('newFolder')}: ${suggestedName}` : `+ ${t('newFolder')}`}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

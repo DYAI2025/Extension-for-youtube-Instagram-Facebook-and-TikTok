@@ -161,8 +161,9 @@ async function buildExtractionCacheKey(parts: {
   mode: string
   scope: string
   contentHash: string
+  language: string
 }): Promise<string> {
-  return sha1Hex(`${parts.url}|${parts.mode}|${parts.scope}|${parts.contentHash}`)
+  return sha1Hex(`${parts.url}|${parts.mode}|${parts.scope}|${parts.contentHash}|${parts.language}`)
 }
 
 // Hash the input content cheaply. For audio (potentially MBs of base64) we mix
@@ -1343,14 +1344,18 @@ async function runExtraction(
   const extractionScope = state.platform === 'youtube' ? 'full_video' : 'current_segment'
 
   // Content-aware cache check. Skip the LLM call when the same video has already
-  // been analyzed with the same mode/scope and an unchanged transcript/audio.
+  // been analyzed with the same mode/scope/language and an unchanged transcript/audio.
+  // Language is part of the key so toggling DE↔EN forces a fresh extraction
+  // instead of replaying a result in the previous language.
   // The `skipKeyedCache` flag (set when the user clicks "New Analysis") forces a fresh run.
   const contentHash = await hashContent(content)
+  const language = await getExtractionLanguage()
   const cacheKey = await buildExtractionCacheKey({
     url: state.url,
     mode: selectedMode,
     scope: extractionScope,
     contentHash,
+    language,
   })
 
   if (!state.skipKeyedCache) {
@@ -1382,6 +1387,7 @@ async function runExtraction(
   try {
     const sessionContext = getSessionContext(state.session)
     const description = content.youtubeSource?.descriptionText ?? ''
+    console.log('[EXTRACT-DEBUG] bg: runExtraction language:', language)
     const payload = {
       url: state.url,
       platform: state.platform,
@@ -1392,6 +1398,7 @@ async function runExtraction(
       audioData: content.audio,
       audioMimeType: content.audio ? 'audio/webm' : undefined,
       metadata: { title: state.title, description },
+      extractionLanguage: language,
       ...(sessionContext ? { sessionContext } : {}),
       ...(content.youtubeSource ? { youtubeSource: content.youtubeSource } : {}),
     }
@@ -1618,6 +1625,21 @@ async function getSupabaseSession(): Promise<string | null> {
   return new Promise((resolve) => {
     chrome.storage.local.get(['supabase_token'], (result) => {
       resolve(result.supabase_token ?? null)
+    })
+  })
+}
+
+/**
+ * Reads the user-selected UI language from chrome.storage.local. The side
+ * panel mirrors its `localStorage('extract-lang')` value into
+ * `extract_language` whenever it boots or the user toggles the language, so
+ * the SW can read it from any context. Returns 'en' as the safe default.
+ */
+async function getExtractionLanguage(): Promise<'en' | 'de'> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['extract_language'], (result) => {
+      const v = result.extract_language
+      resolve(v === 'de' || v === 'en' ? v : 'en')
     })
   })
 }

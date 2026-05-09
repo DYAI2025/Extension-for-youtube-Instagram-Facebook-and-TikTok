@@ -88,6 +88,104 @@
   margin: 0;
 }
 
+/* ── Collapsible section header ─────────────────────────────────────────── */
+.collapsibleSection {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.collapsibleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.collapsibleHeader:hover { color: var(--text-2); }
+
+.collapsibleChevron {
+  transition: transform 180ms ease;
+  flex-shrink: 0;
+}
+
+.collapsibleChevronOpen {
+  transform: rotate(180deg);
+}
+
+.collapsibleSummary {
+  border-top: none;
+  padding-top: 0;
+}
+
+/* ── Overview section (summary + key takeaways collapse together) ───────── */
+.overviewSection {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overviewHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.overviewHeader:hover { color: var(--text-2); }
+
+.overviewLabel { flex: 1; min-width: 0; }
+
+.overviewCount {
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.overviewPreview {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.45;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Bullets ─────────────────────────────────────────────────────────────── */
 .bullets {
   list-style: none;
@@ -294,6 +392,37 @@
 }
 
 .topicHeaderText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.topicCollapseBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--text-3);
+  flex-shrink: 0;
+  align-self: flex-start;
+  border-radius: 4px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.topicCollapseBtn:hover {
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+.topicCollapseCount {
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+}
 
 .topicTitle {
   font-size: 12px;
@@ -530,6 +659,20 @@
 }
 
 .fpRoot { position: relative; }
+
+.fpRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fpLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 
 .fpTrigger {
   display: flex;

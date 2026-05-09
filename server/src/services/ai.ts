@@ -5,6 +5,7 @@ import {
   v2ToPackFields,
   type AttachedLink,
   type AttachedLinkSource,
+  type ExtractionLanguage,
   type ExtractionPackV2,
   type ExtractionScope,
   type OutcomeMode,
@@ -90,6 +91,33 @@ export interface ExtractInput {
    * those links as ground-truth resources (mentioned_in_video=true).
    */
   youtubeSource?: YouTubeSourceBundle
+  /**
+   * Target language for the AI-generated text content. When set, overrides the
+   * default "respond in source language" rule. URLs, repo names, command-line
+   * snippets and proper nouns stay verbatim regardless. Defaults to 'en'.
+   */
+  extractionLanguage?: ExtractionLanguage
+}
+
+const LANGUAGE_NAMES: Record<ExtractionLanguage, string> = {
+  en: 'English',
+  de: 'German (Deutsch)',
+}
+
+/**
+ * Builds the directive that overrides V2_OUTPUT_CONTRACT rule #6
+ * ("respond in the same language as the source content"). The directive is
+ * prepended to the prompt so it dominates downstream rules.
+ */
+function buildLanguageDirective(language?: ExtractionLanguage): string {
+  if (!language) return ''
+  const name = LANGUAGE_NAMES[language]
+  return `LANGUAGE OVERRIDE — HIGHEST PRIORITY:
+- All AI-generated text fields MUST be written in ${name}, regardless of the source video's spoken language.
+- This applies to: title, summary, video_explanation, key_takeaways, sections[].title, sections[].summary, sections[].key_points, sections[].semantic_keywords, resources[].why_relevant, resources[].user_action, resources[].mentioned_context (translate the paraphrase, but keep any quoted product/proper-noun verbatim), key_takeaway_links[].why_relevant_here, key_takeaway_links[].user_action, key_takeaway_links[].description, related_links[].why_relevant_here, related_links[].user_action, related_links[].description, setup_guide.title, setup_guide.prerequisites, setup_guide.steps[].description, setup_guide.warnings, setup_guide.expected_result, warnings[], source_coverage.limitations.
+- Keep VERBATIM (do NOT translate): URLs, domain names, repository names, file paths, CLI commands, code snippets, environment variable names, product/brand/library/framework names (e.g. "React", "Tailwind", "Next.js"), proper nouns of people, channels and companies, version numbers.
+- This directive overrides any other rule that would tell you to match the source language.
+`
 }
 
 export interface ExtractOutput {
@@ -122,6 +150,7 @@ export async function extractWithAIStream(
   if (input.audioData) {
     const model = genAI.getGenerativeModel({ model: AI_MODEL })
     const prompt = buildAudioPrompt(input)
+    console.log(`[ai] stream language=${input.extractionLanguage ?? 'auto'}`)
     const rawMime = input.audioMimeType ?? 'audio/webm'
     const geminiMime = rawMime.startsWith('audio/webm') ? 'video/webm' : rawMime
     const streamResult = await model.generateContentStream({
@@ -134,8 +163,9 @@ export async function extractWithAIStream(
       onChunk(text)
     }
   } else {
-    const systemPrompt = buildSystemPrompt(input.mode, input.sessionContext)
+    const systemPrompt = buildSystemPrompt(input.mode, input.sessionContext, input.extractionLanguage)
     const userPrompt = buildUserPrompt(input)
+    console.log(`[ai] stream language=${input.extractionLanguage ?? 'auto'}`)
     const model = genAI.getGenerativeModel({ model: AI_MODEL, systemInstruction: systemPrompt })
     const streamResult = await model.generateContentStream({
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -163,8 +193,9 @@ export async function extractWithAI(input: ExtractInput): Promise<ExtractOutput>
       raw = JSON.stringify(emptyV2(input, 'Audio extraction requires Gemini. Set AI_PROVIDER=gemini.'))
     }
   } else {
-    const systemPrompt = buildSystemPrompt(input.mode, input.sessionContext)
+    const systemPrompt = buildSystemPrompt(input.mode, input.sessionContext, input.extractionLanguage)
     const userPrompt = buildUserPrompt(input)
+    console.log(`[ai] language=${input.extractionLanguage ?? 'auto'}`)
     switch (AI_PROVIDER) {
       case 'gemini':    raw = await extractTextWithGemini(systemPrompt, userPrompt); break
       case 'openai':    raw = await extractWithOpenAI(systemPrompt, userPrompt); break
@@ -373,13 +404,14 @@ R. When an attached link comes from the description, copy the original timestamp
 S. unassigned_resources is now a LAST-RESORT bucket: it should only hold canonical description links you truly could not match to any topic block. Aim to assign every canonical link to a section.`
 
 function buildAudioPrompt(input: ExtractInput): string {
-  const { platform, title, mode, sessionContext } = input
+  const { platform, title, mode, sessionContext, extractionLanguage } = input
   const modeInstruction = MODE_INSTRUCTIONS[mode]
   const contextBlock = sessionContext
     ? `\n\nALREADY EXTRACTED earlier in this video — do not repeat:\n${sessionContext}\n`
     : ''
+  const languageDirective = buildLanguageDirective(extractionLanguage)
 
-  return `You are an expert at understanding spoken video content. Your task is to UNDERSTAND the video, then produce a precise, structured analysis that EXPLAINS what the video covers and surfaces every actionable resource and step.
+  return `${languageDirective}You are an expert at understanding spoken video content. Your task is to UNDERSTAND the video, then produce a precise, structured analysis that EXPLAINS what the video covers and surfaces every actionable resource and step.
 
 STEP 1 — LISTEN AND UNDERSTAND:
 - Identify the exact topic(s), the type of content (tutorial / opinion / review / demonstration / interview / story), the audience level, and the structure (intro → sections → conclusion).
@@ -412,12 +444,17 @@ ${contextBlock}
 ${V2_OUTPUT_CONTRACT}`
 }
 
-function buildSystemPrompt(mode: OutcomeMode, sessionContext?: string): string {
+function buildSystemPrompt(
+  mode: OutcomeMode,
+  sessionContext?: string,
+  extractionLanguage?: ExtractionLanguage,
+): string {
   const contextBlock = sessionContext
     ? `\n\nALREADY EXTRACTED earlier in this video — do not repeat:\n${sessionContext}\n`
     : ''
+  const languageDirective = buildLanguageDirective(extractionLanguage)
 
-  return `You are an expert video-understanding assistant. You DO NOT summarize. You EXPLAIN videos and surface actionable resources, with a clear distinction between what was actually mentioned in the video and what you (the AI) are recommending as related.
+  return `${languageDirective}You are an expert video-understanding assistant. You DO NOT summarize. You EXPLAIN videos and surface actionable resources, with a clear distinction between what was actually mentioned in the video and what you (the AI) are recommending as related.
 
 Process:
 1. Read the full transcript and understand topic, audience, and structure.

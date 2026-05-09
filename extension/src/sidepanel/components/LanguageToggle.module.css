@@ -1,0 +1,38 @@
+.root {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  height: 22px;
+  background: var(--bg-2);
+}
+
+.btn {
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0 8px;
+  min-width: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn + .btn {
+  border-left: 1px solid var(--border);
+}
+
+.btn:hover {
+  color: var(--text-2);
+}
+
+.btnActive {
+  background: var(--bg-3);
+  color: var(--text);
+}

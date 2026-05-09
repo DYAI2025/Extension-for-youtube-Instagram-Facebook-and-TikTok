@@ -9,6 +9,8 @@ import { ExtractionProgress } from './components/ExtractionProgress'
 import { ResultCard } from './components/ResultCard'
 import type { SavedItemType, SavedItemSelection, SavedItemPayload } from './components/ResultCard'
 import { ThemeToggle } from './components/ThemeToggle'
+import { LanguageToggle } from './components/LanguageToggle'
+import { useT, type TKey } from './i18n'
 import { MemoryView } from './components/memory/MemoryView'
 import { AuthView } from './components/AuthView'
 import { ProfileView } from './components/ProfileView'
@@ -31,13 +33,15 @@ export function App() {
   useAuth()
   useLibrary()
   useProfile()
+  const t = useT()
 
   const {
     user, theme, view, setView,
     platformState, selectedMode,
     extraction, dismissError,
     latestPack, clearAnalysis,
-    addPack, addCollection,
+    addPack, addCollection, addPackToFolder,
+    collections,
   } = useAppStore()
 
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
@@ -223,7 +227,11 @@ export function App() {
 
     console.log('[SAVE-DEBUG] packs: insert ok')
 
+    const folder = folderId ? collections.find((c) => c.id === folderId) : null
+    const folderName = folder?.name ?? null
+
     if (folderId) {
+      console.log('[FOLDER-DEBUG] linking pack to collection: start | folderId-suffix:', folderId.slice(0, 8), '| packId-suffix:', pack.id.slice(0, 8))
       const { error: ciError } = await supabase.from('collection_items').insert({
         collection_id: folderId,
         type: 'pack',
@@ -231,18 +239,22 @@ export function App() {
         position: 0,
       })
       if (ciError) {
-        console.warn('[SAVE-DEBUG] collection_items: insert failed |', ciError.message)
-        setSaveStatus({ kind: 'err', msg: `Saved, but folder link failed: ${ciError.message}` })
+        console.warn('[FOLDER-DEBUG] linking pack to collection: error |', ciError.message)
+        setSaveStatus({ kind: 'err', msg: `${t('savedFolderFailed')}: ${ciError.message}` })
         addPack(pack)
         setSavedIds((prev) => new Set(prev).add(pack.id))
         return
       }
-      console.log('[SAVE-DEBUG] collection_items: insert ok')
+      console.log('[FOLDER-DEBUG] linking pack to collection: success')
+      addPackToFolder(folderId, pack.id)
     }
 
     addPack(pack)
     setSavedIds((prev) => new Set(prev).add(pack.id))
-    setSaveStatus({ kind: 'ok', msg: 'Saved.' })
+    setSaveStatus({
+      kind: 'ok',
+      msg: folderName ? `${t('savedTo')} "${folderName}".` : t('saved'),
+    })
   }
 
   async function handleCreateFolder(name: string) {
@@ -276,7 +288,7 @@ export function App() {
   if (view === 'auth') {
     return (
       <div className={styles.root}>
-        <TopBar onBack={() => setView('main')} title="Account" />
+        <TopBar onBack={() => setView('main')} titleKey="account" />
         <AuthView />
       </div>
     )
@@ -285,7 +297,7 @@ export function App() {
   if (view === 'library') {
     return (
       <div className={styles.root}>
-        <TopBar onBack={() => setView('main')} title="Library" />
+        <TopBar onBack={() => setView('main')} titleKey="library" />
         <MemoryView />
       </div>
     )
@@ -294,7 +306,7 @@ export function App() {
   if (view === 'profile') {
     return (
       <div className={styles.root}>
-        <TopBar onBack={() => setView('main')} title="Profile" />
+        <TopBar onBack={() => setView('main')} titleKey="profile" />
         <ProfileView />
       </div>
     )
@@ -315,21 +327,22 @@ export function App() {
             Extract
           </span>
           <div className={styles.topBarActions}>
+            <LanguageToggle />
             <ThemeToggle />
-            <button className={styles.iconBtn} onClick={() => setView('library')} title="Library">
+            <button className={styles.iconBtn} onClick={() => setView('library')} title={t('library')}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
               </svg>
             </button>
             {user ? (
-              <button className={styles.iconBtn} onClick={() => setView('profile')} title={`Profile — ${user.email}`}>
+              <button className={styles.iconBtn} onClick={() => setView('profile')} title={`${t('profile')} — ${user.email}`}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                   <circle cx="12" cy="7" r="4"/>
                 </svg>
               </button>
             ) : (
-              <button className={styles.iconBtn} onClick={() => setView('auth')} title="Sign in">
+              <button className={styles.iconBtn} onClick={() => setView('auth')} title={t('signIn')}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                   <circle cx="12" cy="7" r="4"/>
@@ -339,7 +352,7 @@ export function App() {
           </div>
         </div>
         <div className={styles.content}>
-          <p className={styles.hint}>Open a video to get started.</p>
+          <p className={styles.hint}>{t('openVideoHint')}</p>
         </div>
       </div>
     )
@@ -370,21 +383,22 @@ export function App() {
           Extract
         </span>
         <div className={styles.topBarActions}>
+          <LanguageToggle />
           <ThemeToggle />
-          <button className={styles.iconBtn} onClick={() => setView('library')} title="Library">
+          <button className={styles.iconBtn} onClick={() => setView('library')} title={t('library')}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
             </svg>
           </button>
           {user ? (
-            <button className={styles.iconBtn} onClick={() => setView('profile')} title={`Profile — ${user.email}`}>
+            <button className={styles.iconBtn} onClick={() => setView('profile')} title={`${t('profile')} — ${user.email}`}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                 <circle cx="12" cy="7" r="4"/>
               </svg>
             </button>
           ) : (
-            <button className={styles.iconBtn} onClick={() => setView('auth')} title="Sign in">
+            <button className={styles.iconBtn} onClick={() => setView('auth')} title={t('signIn')}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                 <circle cx="12" cy="7" r="4"/>
@@ -412,32 +426,32 @@ export function App() {
         {/* Extract button — hidden while active. Force re-analyze when content already exists. */}
         {!isActive && !hasContent && (
           <button className={styles.extractBtn} onClick={() => handleManualExtract(false)}>
-            Extract
+            {t('extract')}
           </button>
         )}
         {!isActive && hasContent && latestPack && (
           <div className={styles.actionGrid}>
             <button className={styles.extractBtn} onClick={() => handleManualExtract(true)}>
-              New Analysis
+              {t('newAnalysis')}
             </button>
             <button className={styles.secondaryBtn} onClick={handleClearAnalysis}>
-              Clear
+              {t('clear')}
             </button>
             <button
               className={styles.secondaryBtn}
               onClick={handleSaveSelected}
               disabled={selectionCount === 0 || savingSelected}
-              title={selectionCount === 0 ? 'Select takeaways or links first' : `Save ${selectionCount} item(s)`}
+              title={selectionCount === 0 ? t('selectFirst') : `${t('saveSelected')} (${selectionCount})`}
             >
-              {savingSelected ? 'Saving…' : `Save Selected${selectionCount > 0 ? ` (${selectionCount})` : ''}`}
+              {savingSelected ? t('saving') : `${t('saveSelected')}${selectionCount > 0 ? ` (${selectionCount})` : ''}`}
             </button>
             <button
               className={styles.secondaryBtn}
               onClick={handleSaveFullAnalysis}
               disabled={savedIds.has(latestPack.id)}
-              title="Save the full analysis to your library"
+              title={t('saveFullAnalysis')}
             >
-              {savedIds.has(latestPack.id) ? 'Saved ✓' : 'Save Full Analysis'}
+              {savedIds.has(latestPack.id) ? t('alreadySaved') : t('saveFullAnalysis')}
             </button>
           </div>
         )}
@@ -469,22 +483,22 @@ export function App() {
             <div className={styles.skeletonGroup}>
               {[90, 68, 82, 75, 60].map((w, i) => <div key={i} className={styles.skeletonBulletLine} style={{ width: `${w}%`, animationDelay: `${i * 140}ms` }} />)}
             </div>
-            <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || 'Analysiere…'} />
+            <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || t('analyzing')} />
           </div>
         )}
 
         {/* Extracting with existing result → slim progress bar only (result stays visible below) */}
         {extraction.status === 'extracting' && hasContent && (
-          <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || 'Aktualisiere…'} />
+          <ExtractionProgress percent={extraction.percent} statusText={extraction.statusText || t('updating')} />
         )}
 
         {/* Recording → indicator + stop button (result stays visible below if it exists) */}
         {extraction.status === 'recording' && (
           <div className={styles.liveCard}>
             <p className={styles.liveTitle}>{platformState.title}</p>
-            <p className={styles.recordingIndicator}>&#9679; Recording…</p>
+            <p className={styles.recordingIndicator}>&#9679; {t('recording')}</p>
             <button className={styles.extractBtn} onClick={() => handleManualExtract(false)}>
-              Stop &amp; Analyze
+              {t('stopAndAnalyze')}
             </button>
           </div>
         )}
@@ -506,8 +520,8 @@ export function App() {
         {!hasContent && extraction.status === 'idle' && (
           <p className={styles.hint}>
             {platformState.strategy === 'instant'
-              ? 'Click Extract to analyze this video.'
-              : 'Click Extract to start recording audio.'}
+              ? t('clickExtractInstant')
+              : t('clickExtractLive')}
           </p>
         )}
 
@@ -519,7 +533,7 @@ export function App() {
             ) : (
               <p className={styles.errorText}>{extraction.error}</p>
             )}
-            <button className={styles.retryBtn} onClick={dismissError}>Dismiss</button>
+            <button className={styles.retryBtn} onClick={dismissError}>{t('dismiss')}</button>
           </div>
         )}
       </div>
@@ -537,16 +551,17 @@ export function App() {
 
 // ─── TopBar helper ────────────────────────────────────────────────────────────
 
-function TopBar({ onBack, title }: { onBack: () => void; title: string }) {
+function TopBar({ onBack, titleKey }: { onBack: () => void; titleKey: TKey }) {
+  const t = useT()
   return (
     <div className={styles.topBar}>
       <button className={styles.backBtn} onClick={onBack}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="15 18 9 12 15 6"/>
         </svg>
-        Back
+        {t('back')}
       </button>
-      <span className={styles.topBarTitle}>{title}</span>
+      <span className={styles.topBarTitle}>{t(titleKey)}</span>
     </div>
   )
 }

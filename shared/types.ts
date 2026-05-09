@@ -59,6 +59,16 @@ export type ExtractionStatus = 'idle' | 'detecting' | 'extracting' | 'recording'
 
 export type Theme = 'dark' | 'light'
 
+/**
+ * Target language for AI-generated extraction text (summary, bullets, topic
+ * blocks, why_relevant_here, user_action, key takeaways). Mirrors the side
+ * panel UI language so the AI output matches what the user reads. URLs, repo
+ * names, command-line snippets, product names and proper nouns stay verbatim
+ * regardless of this setting — see `MODE_INSTRUCTIONS` and the language
+ * directive injected into the system prompt.
+ */
+export type ExtractionLanguage = 'en' | 'de'
+
 // ─── User ────────────────────────────────────────────────────────────────────
 
 export interface User {
@@ -560,6 +570,12 @@ export interface ExtractRequest {
   sessionContext?: string  // summary so far (for continuity across pauses)
   /** Full YouTube source bundle (description text + extracted links). Only set for YouTube. */
   youtubeSource?: YouTubeSourceBundle
+  /**
+   * Target language for AI-generated text. Defaults to 'en' on the server when
+   * omitted. URLs, repo names, command snippets, product names and proper
+   * nouns stay verbatim regardless.
+   */
+  extractionLanguage?: ExtractionLanguage
 }
 
 export interface ExtractResponse {

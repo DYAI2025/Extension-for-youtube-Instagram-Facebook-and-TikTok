@@ -113,18 +113,122 @@
 /* ─── Collection row ─────────────────────────────────────────────────────── */
 .collection {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 11px 13px;
-  cursor: pointer;
   transition: border-color 150ms ease;
+  overflow: hidden;
 }
 
 .collection:hover {
   border-color: var(--border-hi);
+}
+
+.collectionMain {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px;
+  cursor: pointer;
+}
+
+.collectionDelete {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.collectionDelete:hover {
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+.backInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 4px 9px 4px 7px;
+  align-self: flex-start;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.backInline:hover { color: var(--text); border-color: var(--border-hi); }
+
+/* ─── Confirm modal overlay ────────────────────────────────────────────── */
+.confirmOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.confirmCard {
+  background: var(--bg-1, var(--bg-2));
+  border: 1px solid var(--error);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  max-width: 320px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmText {
+  font-size: 12px;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.confirmBtn {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 5px 12px;
+}
+
+.confirmBtn:hover { color: var(--text); border-color: var(--border-hi); }
+.confirmBtn:disabled { opacity: 0.5; cursor: default; }
+
+.confirmDelete {
+  color: var(--error);
+}
+
+.confirmDelete:hover {
+  background: var(--error-bg);
+  border-color: var(--error);
 }
 
 .collectionName {

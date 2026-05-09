@@ -46,7 +46,13 @@ export async function loadProfile(): Promise<void> {
 
     if (data) {
       console.log('[PROFILE-DEBUG] load: row found |', { plan: (data as UserProfile).plan })
-      useAppStore.getState().setProfile(data as UserProfile)
+      const profile = data as UserProfile
+      useAppStore.getState().setProfile(profile)
+      // Sync UI language from profile if it's a supported value.
+      const pref = profile.preferred_language
+      if (pref === 'en' || pref === 'de') {
+        useAppStore.getState().setLanguage(pref)
+      }
       return
     }
 
@@ -133,6 +139,10 @@ export async function updateProfile(patch: Partial<Pick<UserProfile, 'display_na
     console.warn('[PROFILE-DEBUG] update failed |', error.message)
     return null
   }
-  useAppStore.getState().setProfile(data as UserProfile)
-  return data as UserProfile
+  const profile = data as UserProfile
+  useAppStore.getState().setProfile(profile)
+  if (profile.preferred_language === 'en' || profile.preferred_language === 'de') {
+    useAppStore.getState().setLanguage(profile.preferred_language)
+  }
+  return profile
 }

@@ -46,6 +46,7 @@ extractRouter.post('/', async (req: AuthRequest, res) => {
         title: body.metadata?.title,
         sessionContext: body.sessionContext,
         extractionScope: scope,
+        extractionLanguage: body.extractionLanguage,
       })
       return res.json(await withValidatedResources(result))
     }
@@ -64,6 +65,7 @@ extractRouter.post('/', async (req: AuthRequest, res) => {
         sessionContext: body.sessionContext,
         // yt-dlp gives us the entire video audio, so the analysis covers the full video
         extractionScope: 'full_video',
+        extractionLanguage: body.extractionLanguage,
       })
       return res.json(await withValidatedResources(result))
     }
@@ -79,6 +81,7 @@ extractRouter.post('/', async (req: AuthRequest, res) => {
         title: body.metadata?.title,
         sessionContext: body.sessionContext,
         extractionScope: scope,
+        extractionLanguage: body.extractionLanguage,
       })
       return res.json(await withValidatedResources(result))
     }
@@ -105,6 +108,7 @@ extractRouter.post('/', async (req: AuthRequest, res) => {
     sessionContext: body.sessionContext,
     extractionScope: scope,
     youtubeSource: body.youtubeSource,
+    extractionLanguage: body.extractionLanguage,
   })
 
   res.json(await withValidatedResources(result))
@@ -237,7 +241,7 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
       text = resolved
     }
 
-    console.log('[EXTRACT-DEBUG] server/extract: calling extractWithAIStream | textLen:', text.length, '| hasAudio:', !!audioData, '| scope:', scope)
+    console.log('[EXTRACT-DEBUG] server/extract: calling extractWithAIStream | textLen:', text.length, '| hasAudio:', !!audioData, '| scope:', scope, '| language:', body.extractionLanguage ?? 'auto')
     const rawResult = await extractWithAIStream(
       {
         text: text || undefined,
@@ -249,6 +253,7 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
         sessionContext: body.sessionContext,
         extractionScope: scope,
         youtubeSource: body.youtubeSource,
+        extractionLanguage: body.extractionLanguage,
       },
       (chunk) => send('chunk', { text: chunk }),
     )

@@ -50,6 +50,11 @@ interface AppState {
   theme: Theme
   setTheme: (theme: Theme) => void
 
+  // UI language ('en' | 'de'). Persisted to chrome.storage.local; mirrored
+  // to profile.preferred_language when the user is signed in.
+  language: 'en' | 'de'
+  setLanguage: (lang: 'en' | 'de') => void
+
   // Current page
   platformState: PlatformState
   setPlatformState: (state: PlatformState) => void
@@ -87,6 +92,16 @@ interface AppState {
   addPack: (pack: Pack) => void
   addCollection: (collection: Collection) => void
   addSavedItems: (items: SavedItem[]) => void
+  // Folder<->pack relations (mirror of `collection_items`). Mutating these
+  // immutably keeps the local cache in sync after Save / Move / Remove so the
+  // library doesn't need a full reload to reflect changes.
+  addPackToFolder: (folderId: string, packId: string) => void
+  removePackFromFolder: (folderId: string, packId: string) => void
+
+  // Cross-view folder filter — set in Profile, read in Library so clicking a
+  // folder chip in Profile opens Library pre-filtered to that folder.
+  libraryFolderFilter: string | null
+  setLibraryFolderFilter: (id: string | null) => void
 
   // View routing
   view: 'main' | 'library' | 'auth' | 'profile'
@@ -112,6 +127,21 @@ const savedTheme = (typeof localStorage !== 'undefined'
   ? (localStorage.getItem('extract-theme') as Theme | null)
   : null) ?? 'dark'
 
+const savedLanguage: 'en' | 'de' = (() => {
+  if (typeof localStorage === 'undefined') return 'en'
+  const v = localStorage.getItem('extract-lang')
+  return v === 'de' || v === 'en' ? v : 'en'
+})()
+
+// Seed chrome.storage.local on side-panel load so the background service worker
+// always has a value available when building the extraction payload (the SW
+// has no DOM localStorage). Subsequent setLanguage() calls keep it in sync.
+try {
+  chrome.storage?.local?.set({ extract_language: savedLanguage })
+} catch {
+  // ignore (non-extension contexts)
+}
+
 export const useAppStore = create<AppState>((set) => ({
   user: null,
   setUser: (user) => set({ user }),
@@ -128,6 +158,22 @@ export const useAppStore = create<AppState>((set) => ({
     localStorage.setItem('extract-theme', theme)
     document.documentElement.setAttribute('data-theme', theme)
     set({ theme })
+  },
+
+  language: savedLanguage,
+  setLanguage: (language) => {
+    localStorage.setItem('extract-lang', language)
+    // Mirror to chrome.storage.local so the background service worker (which
+    // has no DOM localStorage) can read it when building the extraction
+    // payload. Best-effort: chrome.storage may be unavailable in non-extension
+    // contexts (e.g. tests), so swallow rejections.
+    try {
+      chrome.storage?.local?.set({ extract_language: language })
+    } catch {
+      // ignore
+    }
+    document.documentElement.setAttribute('lang', language)
+    set({ language })
   },
 
   platformState: defaultPlatform,
@@ -171,6 +217,27 @@ export const useAppStore = create<AppState>((set) => ({
   addPack: (pack) => set((s) => ({ packs: [pack, ...s.packs] })),
   addCollection: (col) => set((s) => ({ collections: [...s.collections, col] })),
   addSavedItems: (items) => set((s) => ({ savedItems: [...items, ...s.savedItems] })),
+  addPackToFolder: (folderId, packId) =>
+    set((s) => ({
+      collections: s.collections.map((c) =>
+        c.id === folderId
+          ? c.items.some((it) => it.type === 'pack' && it.refId === packId)
+            ? c
+            : { ...c, items: [...c.items, { type: 'pack', refId: packId }] }
+          : c,
+      ),
+    })),
+  removePackFromFolder: (folderId, packId) =>
+    set((s) => ({
+      collections: s.collections.map((c) =>
+        c.id === folderId
+          ? { ...c, items: c.items.filter((it) => !(it.type === 'pack' && it.refId === packId)) }
+          : c,
+      ),
+    })),
+
+  libraryFolderFilter: null,
+  setLibraryFolderFilter: (libraryFolderFilter) => set({ libraryFolderFilter }),
 
   view: 'main',
   setView: (view) => set({ view }),
