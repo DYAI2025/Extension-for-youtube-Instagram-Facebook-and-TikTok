@@ -1,21 +1,14 @@
 import { Router } from 'express'
-import { createClient } from '@supabase/supabase-js'
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
 import { extractWithAI, extractWithAIStream, type ExtractOutput } from '../services/ai.js'
 import { fetchYouTubeTranscript, joinCaptionChunks, downloadAudioFromPageUrl } from '../services/transcription.js'
 import { validateResources } from '../services/urlValidator.js'
 import { extractYouTubeId } from '../utils/youtube.js'
-import type { AttachedLink, ExtractionPackV2, ExtractRequest, Resource } from '../../../shared/types.js'
+import type { AttachedLink, ExtractionPackV2, ExtractionScope, ExtractRequest, Resource } from '../../../shared/types.js'
 
 export const extractRouter = Router()
 
 extractRouter.use(authMiddleware)
-
-// ─── Supabase client (service role — server-side only) ────────────────────────
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
 
 
 extractRouter.post('/', async (req: AuthRequest, res) => {
@@ -32,87 +25,103 @@ extractRouter.post('/', async (req: AuthRequest, res) => {
   // Default scope when client omits it: YouTube → full_video, live → current_segment
   const scope = body.extractionScope ?? (body.platform === 'youtube' ? 'full_video' : 'current_segment')
 
-  // ── Non-YouTube: TikTok / Instagram / Facebook ───────────────────────────
-  if (body.platform !== 'youtube') {
-
-    // Tier 1: tab-captured audio blob (fast — available when tabCapture worked)
-    if (body.audioData) {
-      console.log(`[extract] tier-1 tabCapture audio for ${body.platform}`)
-      const result = await extractWithAI({
-        audioData: body.audioData,
-        audioMimeType: body.audioMimeType,
-        mode: body.mode,
-        platform: body.platform,
-        title: body.metadata?.title,
-        sessionContext: body.sessionContext,
-        extractionScope: scope,
-        extractionLanguage: body.extractionLanguage,
-      })
-      return res.json(await withValidatedResources(result))
-    }
-
-    // Tier 2: yt-dlp server-side download → Gemini audio analysis
-    // Works for all public TikTok, Instagram Reels, and Facebook Reels.
-    console.log(`[extract] tier-2 yt-dlp for ${body.platform}: ${body.url}`)
-    const downloaded = await downloadAudioFromPageUrl(body.url)
-    if (downloaded) {
-      const result = await extractWithAI({
-        audioData: downloaded.base64,
-        audioMimeType: downloaded.mimeType,
-        mode: body.mode,
-        platform: body.platform,
-        title: body.metadata?.title,
-        sessionContext: body.sessionContext,
-        // yt-dlp gives us the entire video audio, so the analysis covers the full video
-        extractionScope: 'full_video',
-        extractionLanguage: body.extractionLanguage,
-      })
-      return res.json(await withValidatedResources(result))
-    }
-
-    // Tier 3: caption chunks (legacy / last resort)
-    if (body.captionChunks?.length) {
-      console.log(`[extract] tier-3 captions for ${body.platform}`)
-      const text = joinCaptionChunks(body.captionChunks).text
-      const result = await extractWithAI({
-        text,
-        mode: body.mode,
-        platform: body.platform,
-        title: body.metadata?.title,
-        sessionContext: body.sessionContext,
-        extractionScope: scope,
-        extractionLanguage: body.extractionLanguage,
-      })
-      return res.json(await withValidatedResources(result))
-    }
-
-    return res.status(422).json({
-      error: 'Could not extract content from this video. It may be private, geo-blocked, or require a login.',
-    })
-  }
-
-  // ── YouTube ───────────────────────────────────────────────────────────────
-  const text = await resolveYouTubeText(body)
-  if (text === null) {
-    return res.status(400).json({ error: 'No captions captured. Enable subtitles on the video and let it play, then pause.' })
-  }
-  if (!text.trim()) {
-    return res.status(422).json({ error: 'No extractable content found for this video.' })
+  const content = await resolveExtractionInput(body, scope)
+  if ('error' in content) {
+    return res.status(content.status).json({ error: content.error })
   }
 
   const result = await extractWithAI({
-    text,
+    text: content.text,
+    audioData: content.audioData,
+    audioMimeType: content.audioMimeType,
     mode: body.mode,
     platform: body.platform,
     title: body.metadata?.title,
     sessionContext: body.sessionContext,
-    extractionScope: scope,
+    extractionScope: content.extractionScope,
     youtubeSource: body.youtubeSource,
     extractionLanguage: body.extractionLanguage,
   })
 
   res.json(await withValidatedResources(result))
 })
+
+
+type DownloadAudio = typeof downloadAudioFromPageUrl
+
+type ExtractionInputResolution =
+  | {
+      text?: string
+      audioData?: string
+      audioMimeType?: string
+      extractionScope: ExtractionScope
+    }
+  | {
+      error: string
+      status: number
+    }
+
+/**
+ * Single extraction-content resolver shared by JSON and streaming routes.
+ * Keeping platform fallback order in one place prevents endpoint-specific drift
+ * (for example, the streaming route forgetting the server-side yt-dlp fallback).
+ */
+export async function resolveExtractionInput(
+  body: ExtractRequest,
+  defaultScope: ExtractionScope,
+  downloadAudio: DownloadAudio = downloadAudioFromPageUrl,
+): Promise<ExtractionInputResolution> {
+  if (body.platform === 'youtube') {
+    const text = await resolveYouTubeText(body)
+    if (text === null) {
+      return {
+        status: 400,
+        error: 'No captions captured. Enable subtitles on the video and let it play, then pause.',
+      }
+    }
+    if (!text.trim()) {
+      return { status: 422, error: 'No extractable content found for this video.' }
+    }
+    return { text, extractionScope: defaultScope }
+  }
+
+  // Tier 1: tab-captured audio blob (fast — available when tabCapture worked).
+  if (body.audioData) {
+    console.log(`[extract] tier-1 tabCapture audio for ${body.platform}`)
+    return {
+      audioData: body.audioData,
+      audioMimeType: body.audioMimeType,
+      extractionScope: defaultScope,
+    }
+  }
+
+  // Tier 2: server-side download. This is the authoritative fallback for public
+  // TikTok/Instagram/Facebook URLs when browser audio capture is unavailable.
+  console.log(`[extract] tier-2 yt-dlp for ${body.platform}: ${body.url}`)
+  const downloaded = await downloadAudio(body.url)
+  if (downloaded) {
+    return {
+      audioData: downloaded.base64,
+      audioMimeType: downloaded.mimeType,
+      // yt-dlp downloads the whole public video, so the analysis is full-video.
+      extractionScope: 'full_video',
+    }
+  }
+
+  // Tier 3: caption chunks (legacy / last resort).
+  if (body.captionChunks?.length) {
+    console.log(`[extract] tier-3 captions for ${body.platform}`)
+    return {
+      text: joinCaptionChunks(body.captionChunks).text,
+      extractionScope: defaultScope,
+    }
+  }
+
+  return {
+    status: 422,
+    error: 'Could not extract content from this video. It may be private, geo-blocked, or require a login.',
+  }
+}
 
 /**
  * Run the URL liveness check on the resources returned by the LLM and return
@@ -217,31 +226,18 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
     // Default scope when client omits it: YouTube → full_video, live → current_segment
     const scope = body.extractionScope ?? (body.platform === 'youtube' ? 'full_video' : 'current_segment')
 
-    // Prepare input content
-    let text = ''
-    let audioData: string | undefined
-    let audioMimeType: string | undefined
-
-    if (body.platform !== 'youtube') {
-      if (body.audioData) {
-        audioData = body.audioData
-        audioMimeType = body.audioMimeType
-      } else if (body.captionChunks?.length) {
-        text = joinCaptionChunks(body.captionChunks).text
-      } else {
-        send('error', { message: 'No content available for extraction.' })
-        return res.end()
-      }
-    } else {
-      const resolved = await resolveYouTubeText(body)
-      if (resolved === null || !resolved.trim()) {
-        send('error', { message: 'No extractable content found for this video.' })
-        return res.end()
-      }
-      text = resolved
+    const content = await resolveExtractionInput(body, scope)
+    if ('error' in content) {
+      send('error', { message: content.error })
+      return res.end()
     }
 
-    console.log('[EXTRACT-DEBUG] server/extract: calling extractWithAIStream | textLen:', text.length, '| hasAudio:', !!audioData, '| scope:', scope, '| language:', body.extractionLanguage ?? 'auto')
+    const text = content.text ?? ''
+    const audioData = content.audioData
+    const audioMimeType = content.audioMimeType
+
+
+    console.log('[EXTRACT-DEBUG] server/extract: calling extractWithAIStream | textLen:', text.length, '| hasAudio:', !!audioData, '| scope:', content.extractionScope, '| language:', body.extractionLanguage ?? 'auto')
     const rawResult = await extractWithAIStream(
       {
         text: text || undefined,
@@ -251,7 +247,7 @@ extractRouter.post('/stream', async (req: AuthRequest, res) => {
         platform: body.platform,
         title: body.metadata?.title,
         sessionContext: body.sessionContext,
-        extractionScope: scope,
+        extractionScope: content.extractionScope,
         youtubeSource: body.youtubeSource,
         extractionLanguage: body.extractionLanguage,
       },
