@@ -1276,13 +1276,27 @@ async function flushAndAnalyze(tabId: number, state: TabState) {
   const audioData = await flushAudio()
   console.log('[bg] flushAudio result | hasData:', !!audioData?.data, '| durationMs:', audioData?.durationMs)
   if (!audioData?.data) {
-    const errMsg = state.platform === 'youtube'
-      ? 'Kein Audio aufgezeichnet. Starte das Video, klicke Extract, warte einige Sekunden, dann pausiere.'
-      : 'Kein Audio im Puffer. Das Video muss laufen, bevor du Extract klickst. Warte nach dem Klick mindestens 3 Sekunden vor dem Pausieren.'
-    chrome.runtime.sendMessage({ type: 'EXTRACTION_ERROR', message: errMsg }).catch(() => {})
+    if (state.platform === 'youtube') {
+      chrome.runtime.sendMessage({
+        type: 'EXTRACTION_ERROR',
+        message: 'Kein Audio aufgezeichnet. Starte das Video, klicke Extract, warte einige Sekunden, dann pausiere.',
+      }).catch(() => {})
+      return
+    }
+
+    // Do not fail in the browser just because tabCapture has no buffer. The
+    // server owns the durable TikTok/Instagram/Facebook fallback chain and can
+    // still try yt-dlp from the page URL.
+    chrome.runtime.sendMessage({
+      type: 'EXTRACTION_PROGRESS',
+      percent: 20,
+      statusText: 'Kein Audio im Puffer — versuche Server-Fallback…',
+    }).catch(() => {})
+    await runExtraction(tabId, state, {})
+    startAudioCapture(tabId)
     return
   }
-  await runExtraction(tabId, state, { audio: audioData.data })
+  await runExtraction(tabId, state, { audio: audioData.data, audioMimeType: audioData.mimeType })
   // Restart capture so next recording segment is ready (does NOT set isRecording = true)
   startAudioCapture(tabId)
 }
@@ -1336,7 +1350,7 @@ function parsePartialJson(text: string): { title?: string; summary?: string; key
 async function runExtraction(
   tabId: number,
   state: TabState,
-  content: { transcript?: string; audio?: string; youtubeSource?: YouTubeSourceBundle },
+  content: { transcript?: string; audio?: string; audioMimeType?: string; youtubeSource?: YouTubeSourceBundle },
 ) {
   if (state.extracting) return
 
@@ -1396,7 +1410,7 @@ async function runExtraction(
       extractionScope,
       transcript: content.transcript,
       audioData: content.audio,
-      audioMimeType: content.audio ? 'audio/webm' : undefined,
+      audioMimeType: content.audio ? (content.audioMimeType ?? 'audio/webm') : undefined,
       metadata: { title: state.title, description },
       extractionLanguage: language,
       ...(sessionContext ? { sessionContext } : {}),
